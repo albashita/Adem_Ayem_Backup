@@ -6,28 +6,28 @@ use Illuminate\Database\Eloquent\Model;
 
 class Expense extends Model
 {
-    protected $table = 'expenses';
-
-    protected $primaryKey = 'id_expense';
+    protected $table = 'ms_pengeluaran';
+    protected $primaryKey = 'id_pengeluaran';
 
     public const CATEGORIES = [
-        'Bahan Baku',
-        'Operasional',
-        'Gaji',
-        'Transportasi',
-        'Perawatan',
-        'Lain-lain',
+        'bahan', 'wifi', 'gaji', 'listrik',
+        'operasional', 'transportasi', 'perawatan', 'lain-lain',
     ];
 
-    protected $fillable = [
-        'expense_date',
-        'category',
-        'description',
-        'amount',
-    ];
+    protected $fillable = ['id_user', 'tanggal', 'total', 'kategori', 'keterangan'];
 
     protected $casts = [
-        'expense_date' => 'date:Y-m-d',
-        'amount'       => 'decimal:2',
+        'tanggal' => 'date:Y-m-d',
+        'total'   => 'integer',
     ];
+
+    public function items()
+    {
+        return $this->hasMany(ExpenseItem::class, 'id_pengeluaran', 'id_pengeluaran');
+    }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'id_user', 'id_user');
+    }
 }

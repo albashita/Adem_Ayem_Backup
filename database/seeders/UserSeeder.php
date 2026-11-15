@@ -2,26 +2,28 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        $akun = [
-            ['name' => 'Owner', 'username' => 'owner', 'role' => 'owner'],
-            ['name' => 'Admin', 'username' => 'admin', 'role' => 'admin'],
-            ['name' => 'Kasir', 'username' => 'kasir', 'role' => 'kasir'],
+        $users = [
+            ['nama' => 'Owner', 'username' => 'owner', 'role' => 'superadmin'],
+            ['nama' => 'Admin', 'username' => 'admin', 'role' => 'admin'],
+            ['nama' => 'Kasir', 'username' => 'kasir', 'role' => 'kasir'],
         ];
 
-        foreach ($akun as $a) {
-            User::updateOrCreate(
-                ['username' => $a['username']],
-                [
-                    'name'     => $a['name'],
-                    'password' => 'password123', // otomatis di-hash oleh cast
-                    'role'     => $a['role'],
+        foreach ($users as $u) {
+            DB::table('ms_user')->updateOrInsert(
+                ['username' => $u['username']],
+                $u + [
+                    'password'   => Hash::make('password123'),
+                    'status'     => 'aktif',
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]
             );
         }

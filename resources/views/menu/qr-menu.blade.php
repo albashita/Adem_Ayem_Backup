@@ -2,11 +2,26 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#1f5d3a">
     <title>Daftar Menu - Depot Yu Sri Adem Ayem</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Kaushan+Script&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/qr-menu.css') }}">
+    <style>
+        /* Pastikan atribut hidden selalu menyembunyikan elemen */
+        [hidden] { display: none !important; }
+        .menu-retry {
+            margin-top: 12px;
+            padding: 8px 18px;
+            border: 0;
+            border-radius: 8px;
+            background: #2f7d4f;
+            color: #fff;
+            font: 600 13px 'Poppins', sans-serif;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
     <header class="menu-header">
@@ -26,7 +41,10 @@
             <div class="category-chips" id="categoryChips" role="group" aria-label="Pilih kategori"></div>
         </div>
 
-        <p id="menuStatus" class="menu-status">Memuat menu...</p>
+        <div id="menuStatusBox" style="text-align:center;">
+            <p id="menuStatus" class="menu-status">Memuat menu...</p>
+            <button type="button" id="menuRetry" class="menu-retry" hidden>Muat ulang</button>
+        </div>
         <section id="menuList" class="menu-grid"></section>
     </main>
 
@@ -34,11 +52,24 @@
         Terima kasih telah berkunjung ke Depot Yu Sri Adem Ayem.
     </footer>
 
+    <noscript>
+        <p style="text-align:center;padding:20px;">Aktifkan JavaScript untuk melihat daftar menu.</p>
+    </noscript>
+
     <script>
+        const MENU_DATA_URL = @json(route('qr-menu.data'));
+
         const menuList = document.getElementById('menuList');
         const menuStatus = document.getElementById('menuStatus');
+        const menuRetry = document.getElementById('menuRetry');
         const menuSearch = document.getElementById('menuSearch');
         const categoryChips = document.getElementById('categoryChips');
+
+        const rupiahFormat = new Intl.NumberFormat('id-ID', {
+            style: 'currency',
+            currency: 'IDR',
+            maximumFractionDigits: 0
+        });
 
         let menus = [];
         let selectedCategory = '';
@@ -51,6 +82,23 @@
                 '"': '&quot;',
                 "'": '&#039;'
             })[char]);
+        }
+
+        // Dipanggil saat file foto gagal dimuat
+        function photoFailed(img) {
+            const box = img.parentElement;
+            if (box) box.innerHTML = '<div class="no-photo">Foto belum tersedia</div>';
+        }
+
+        function showStatus(text, withRetry = false) {
+            menuStatus.hidden = false;
+            menuStatus.textContent = text;
+            menuRetry.hidden = !withRetry;
+        }
+
+        function hideStatus() {
+            menuStatus.hidden = true;
+            menuRetry.hidden = true;
         }
 
         function renderChips(categories) {
@@ -72,36 +120,33 @@
 
             const filtered = menus.filter(menu => {
                 const name = String(menu.name || '').toLowerCase();
+                const description = String(menu.description || '').toLowerCase();
                 const category = String(menu.category?.name || '');
 
-                return name.includes(keyword) &&
-                    (!selectedCategory || category === selectedCategory);
+                const matchesKeyword = !keyword
+                    || name.includes(keyword)
+                    || description.includes(keyword);
+
+                return matchesKeyword && (!selectedCategory || category === selectedCategory);
             });
 
             if (!filtered.length) {
                 menuList.innerHTML = '';
-                menuStatus.hidden = false;
-                menuStatus.textContent = menus.length
+                showStatus(menus.length
                     ? 'Menu yang dicari tidak ditemukan.'
-                    : 'Belum ada menu yang tersedia.';
+                    : 'Belum ada menu yang tersedia.');
                 return;
             }
 
-            menuStatus.hidden = true;
+            hideStatus();
 
             menuList.innerHTML = filtered.map(menu => {
                 const photo = menu.image_url
                     ? `<img src="${escapeHTML(menu.image_url)}"
                             alt="${escapeHTML(menu.name)}"
                             loading="lazy"
-                            onerror="this.style.display='none';">`
+                            onerror="photoFailed(this)">`
                     : '<div class="no-photo">Foto belum tersedia</div>';
-
-                const price = new Intl.NumberFormat('id-ID', {
-                    style: 'currency',
-                    currency: 'IDR',
-                    maximumFractionDigits: 0
-                }).format(Number(menu.price) || 0);
 
                 return `
                     <article class="menu-card">
@@ -109,7 +154,7 @@
                         <div class="menu-info">
                             <h2>${escapeHTML(menu.name)}</h2>
                             <p>${escapeHTML(menu.description || 'Menu pilihan Adem Ayem.')}</p>
-                            <strong>${price}</strong>
+                            <strong>${rupiahFormat.format(Number(menu.price) || 0)}</strong>
                         </div>
                     </article>
                 `;
@@ -117,13 +162,16 @@
         }
 
         async function loadMenus() {
+            showStatus('Memuat menu...');
+
             try {
-                const response = await fetch('/qr-menu/data', {
-                    headers: { 'Accept': 'application/json' }
+                const response = await fetch(MENU_DATA_URL, {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
                 });
 
                 if (!response.ok) {
-                    throw new Error('Gagal mengambil data menu.');
+                    throw new Error('Gagal mengambil data menu (kode ' + response.status + ').');
                 }
 
                 menus = await response.json();
@@ -135,8 +183,7 @@
                 renderChips(categories);
                 renderMenus();
             } catch (error) {
-                menuStatus.hidden = false;
-                menuStatus.textContent = 'Menu gagal dimuat. Silakan muat ulang halaman.';
+                showStatus('Menu gagal dimuat. Periksa koneksi lalu coba lagi.', true);
                 console.error(error);
             }
         }
@@ -157,6 +204,7 @@
         });
 
         menuSearch.addEventListener('input', renderMenus);
+        menuRetry.addEventListener('click', loadMenus);
 
         loadMenus();
     </script>

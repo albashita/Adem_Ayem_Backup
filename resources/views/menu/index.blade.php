@@ -12,9 +12,8 @@
      data-delete-url="{{ url('/menu') }}"
      data-recipe-url="{{ url('/menu') }}">
 
-
     <div class="panel">
-        
+
         <div class="menu-header">
             <div class="menu-header-left">
                 <h3>Daftar Menu</h3>
@@ -38,7 +37,7 @@
             </button>
         </div>
 
-        <div id="menuMessage" style="margin:12px 0;"></div>
+        <div id="menuMessage" style="margin:12px 0; min-height:18px; font-size:13.5px;"></div>
 
         <div class="menu-table-responsive" style="overflow-x:auto; -webkit-overflow-scrolling:touch; width:100%;">
             <table class="menu-table">
@@ -81,20 +80,21 @@
          style="width:100%; max-width:550px; max-height:90vh;
                 overflow-y:auto; margin:0;">
 
-          <div class="menu-modal-header">
-              <h3 id="menuModalTitle">Tambah Menu</h3>
-          </div>
+        <div class="menu-modal-header">
+            <h3 id="menuModalTitle">Tambah Menu</h3>
+        </div>
 
         <form id="menuForm" class="menu-form-grid" onsubmit="saveMenu(event)">
             <div class="field">
                 <label for="mCode">Kode Menu</label>
-                <input id="mCode" type="text" maxlength="30" placeholder="Contoh: MNU-001" required>
+                <input id="mCode" type="text" maxlength="10"
+                       placeholder="Kosongkan untuk kode otomatis (mis. MN014)">
             </div>
 
             <div class="field">
                 <label for="mName">Nama Menu</label>
-                <input id="mName" type="text" maxlength="20"
-                       placeholder="Contoh: Nasi Goreng" required>
+                <input id="mName" type="text" maxlength="45"
+                       placeholder="Contoh: Gurame Goreng" required>
             </div>
 
             <div class="field">
@@ -116,34 +116,40 @@
             </div>
 
             <div class="field">
-                <label for="mDescription">Deskripsi</label>
-                <input
-                    id="mDescription"
-                    type="text"
-                    maxlength="200"
-                   placeholder="Contoh: Gurame goreng dengan sambal pedas"
-                >
+                <label for="mPackaging">Biaya Kemasan (Rp)</label>
+                <input id="mPackaging" type="number" min="0" step="1"
+                       value="0" placeholder="0">
+                <small>Dikenakan untuk pesanan bawa pulang.</small>
             </div>
 
             <div class="field">
-                 <label for="mImage">Foto Menu</label>
-                 <input
-                     id="mImage"
-                     type="file"
-                     accept="image/jpeg,image/png,image/webp"
-                  >
-                <small>Format JPG, PNG, atau WEBP.</small>
+                <label for="mDescription">Deskripsi</label>
+                <input id="mDescription" type="text" maxlength="200"
+                       placeholder="Contoh: Gurame goreng dengan sambal pedas">
+            </div>
 
-           <div style="margin-top:12px;">
-           <img
-            id="mImagePreview"
-            src=""
-            alt="Preview foto menu"
-            style="display:none; width:140px; height:110px;
-                   object-fit:cover; border-radius:10px;"
-        >
-        </div>
-        </div>
+            {{-- Status hanya tampil saat mengubah menu --}}
+            <div class="field" id="mStatusField" style="display:none;">
+                <label for="mStatus">Status</label>
+                <select id="mStatus">
+                    <option value="tersedia">Tersedia</option>
+                    <option value="kosong">Nonaktif (tidak tampil di Kasir dan QR Menu)</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="mImage">Foto Menu</label>
+                <input id="mImage" type="file"
+                       accept="image/jpeg,image/png,image/webp"
+                       onchange="previewMenuImage(this)">
+                <small>Format JPG, PNG, atau WEBP, maksimal 2 MB.</small>
+
+                <div style="margin-top:12px;">
+                    <img id="mImagePreview" src="" alt="Preview foto menu"
+                         style="display:none; width:140px; height:110px;
+                                object-fit:cover; border-radius:10px;">
+                </div>
+            </div>
 
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
                 <button type="button" class="btn" onclick="closeMenuModal()">
@@ -157,6 +163,7 @@
     </div>
 </div>
 
+{{-- MODAL HAPUS MENU --}}
 <div id="deleteMenuModal"
      style="display:none; position:fixed; inset:0; z-index:10000;
             background:rgba(0,0,0,.5); padding:20px;
@@ -392,7 +399,7 @@
     border-bottom: 2px solid var(--line, #d5ded8);
 }
 
-/* 1. Foto: 9% - Lebar tetap, posisi tengah */
+/* 1. Foto */
 .menu-page .menu-table th.col-foto,
 .menu-page .menu-table td.col-foto,
 .menu-table .col-foto {
@@ -410,7 +417,7 @@
     border: 1px solid #e2e8f0;
 }
 
-/* 2. Kode: 12% - Rata kiri sejajar header */
+/* 2. Kode */
 .menu-page .menu-table th.col-kode,
 .menu-page .menu-table td.col-kode,
 .menu-table .col-kode {
@@ -423,7 +430,7 @@
     text-overflow: ellipsis;
 }
 
-/* 3. Nama: 26% - Rata kiri sejajar header, tidak menyerap ruang berlebih, teks panjang wrap secara wajar */
+/* 3. Nama */
 .menu-page .menu-table th.col-nama,
 .menu-page .menu-table td.col-nama,
 .menu-table .col-nama {
@@ -440,7 +447,16 @@
     line-height: 1.4;
 }
 
-/* 4. Kategori: 15% - Rata kiri sejajar header */
+/* Penanda menu nonaktif */
+.menu-table .tag-nonaktif {
+    margin-left: 6px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* 4. Kategori */
 .menu-page .menu-table th.col-kategori,
 .menu-page .menu-table td.col-kategori,
 .menu-table .col-kategori {
@@ -449,7 +465,7 @@
     white-space: nowrap;
 }
 
-/* 5. Harga: 15% - Rata kiri sejajar header, ada jarak visual cukup sebelum Aksi */
+/* 5. Harga */
 .menu-page .menu-table th.col-harga,
 .menu-page .menu-table td.col-harga,
 .menu-table .col-harga {
@@ -461,7 +477,7 @@
     white-space: nowrap;
 }
 
-/* 6. Aksi: 23% - Rata kiri sejajar header, tombol aksi tersusun horizontal */
+/* 6. Aksi */
 .menu-page .menu-table th.col-aksi,
 .menu-page .menu-table td.col-aksi,
 .menu-table .col-aksi {

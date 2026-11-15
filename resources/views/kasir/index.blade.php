@@ -6,8 +6,10 @@
 
 @section('content')
 @php
-    // Ubah IP dan port server di sini jika diperlukan.
-    $qrMenuUrl = 'http://192.168.1.136:8000/qr-menu';
+    // Memakai alamat yang sedang dibuka, jadi tidak terkunci ke satu IP.
+    // Supaya QR bisa dipindai HP, buka halaman Kasir lewat IP laptop,
+    // mis. http://192.168.1.136:8000/kasir
+    $qrMenuUrl = url('/qr-menu');
 @endphp
 
 <div class="pos-layout" id="kasirPage"

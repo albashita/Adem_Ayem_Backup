@@ -1,7 +1,11 @@
 /**
  * Adem Ayem - Payment & Receipt Module
- * Modal pembayaran, kalkulasi kembalian, cetak struk, salin link, dan QR struk digital.
+ * Modal pembayaran, kalkulasi kembalian, dan struk.
  */
+
+// Ubah sesuai identitas usaha (tampil di struk)
+const STORE_NAME = 'ADEM AYEM';
+const STORE_ADDRESS = 'Jl. Contoh No. 1, Kotamu';
 
 let selectedPay = 'tunai';
 let payingOrder = null;
@@ -19,18 +23,6 @@ const PAY_ENUM = {
   transfer: 'transfer'
 };
 
-function openPaymentModal() {
-  if (!cart.length) {
-    alert('Belum ada pesanan.');
-    return;
-  }
-  selectedPay = 'tunai';
-  document.getElementById('payModalTotal').textContent = rupiah(computeTotals().total);
-  document.getElementById('cashReceived').value = '';
-  selectPayModal('tunai');
-  document.getElementById('paymentModal').style.display = 'flex';
-}
-
 function closePaymentModal() {
   const modal = document.getElementById('paymentModal');
   if (modal) modal.style.display = 'none';
@@ -45,7 +37,8 @@ function selectPayModal(m) {
 }
 
 function currentPayTotal() {
-  return payingOrder ? payingOrder.total : computeTotals().total;
+  if (payingOrder) return payingOrder.total;
+  return typeof computeTotals === 'function' ? computeTotals().total : 0;
 }
 
 function setQuickAmt(v) {
@@ -65,17 +58,19 @@ function updateChange() {
 function closeReceiptModal() {
   const receiptModal = document.getElementById('receiptModal');
   if (receiptModal) receiptModal.style.display = 'none';
-  const c = document.getElementById('custName');
-  if (c) c.value = '';
 }
+
+/* ------------------------------------------------------------ STRUK */
 
 function receiptRowsHTML(t) {
   const itemsHtml = (t.items || []).map(i =>
     `<div class="rline"><span>${escapeMenuHTML(i.name)}<br>&nbsp;&nbsp;${i.qty} x ${rupiah(i.price)}</span><span>${rupiah(i.price * i.qty)}</span></div>`
   ).join('');
 
+  const d = new Date(t.date);
+
   return `
-    <div class="rline"><span>No. ${escapeMenuHTML(t.no)}</span><span>${new Date(t.date).toLocaleDateString('id-ID')} ${new Date(t.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span></div>
+    <div class="rline"><span>No. ${escapeMenuHTML(t.no)}</span><span>${d.toLocaleDateString('id-ID')} ${d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span></div>
     <div class="rline"><span>Kasir: ${escapeMenuHTML(t.kasir || '-')}</span><span>${t.orderType === 'takeaway' ? 'Bawa pulang' : 'Makan di tempat'}</span></div>
     <div class="rline"><span>Pelanggan</span><span>${escapeMenuHTML(t.customer || '-')}</span></div>
     <hr>${itemsHtml}<hr>
@@ -86,85 +81,60 @@ function receiptRowsHTML(t) {
     ${t.payment === 'tunai' ? `<div class="rline"><span>Kembali</span><span>${rupiah(t.change)}</span></div>` : ''}`;
 }
 
-// QR asli: berisi link ke halaman struk digital publik.
-// Digambar manual dari data modul supaya selalu hitam di atas putih.
-function buildReceiptQr(t) {
-  if (typeof qrcode !== 'function' || !t || !t.receiptUrl) {
-    return '<div style="font-size:12px;color:var(--muted);">QR belum tersedia</div>';
-  }
-  const qr = qrcode(0, 'M');
-  qr.addData(t.receiptUrl);
-  qr.make();
-
-  const n = qr.getModuleCount();
-  const cell = 5, quiet = 2;
-  const size = (n + quiet * 2) * cell;
-  let rects = '';
-  for (let r = 0; r < n; r++) {
-    for (let c = 0; c < n; c++) {
-      if (qr.isDark(r, c)) {
-        rects += `<rect x="${(c + quiet) * cell}" y="${(r + quiet) * cell}" width="${cell}" height="${cell}" fill="#000"/>`;
-      }
-    }
-  }
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" style="display:block;margin:0 auto;background:#fff;">`
-    + `<rect width="${size}" height="${size}" fill="#fff"/>${rects}</svg>`;
+// Isi struk lengkap (dipakai di layar dan saat dicetak)
+function receiptDocHTML(t) {
+  return `
+    <div class="center" style="text-align:center"><b>${escapeMenuHTML(STORE_NAME)}</b><br><span style="font-size:11px">${escapeMenuHTML(STORE_ADDRESS)}</span></div>
+    <hr>${receiptRowsHTML(t)}<hr>
+    <div class="center" style="text-align:center;font-size:11.5px">Terima kasih atas kunjungan Anda<br>Simpan struk ini sebagai bukti</div>`;
 }
 
 function openReceiptModal(t) {
   const bodyEl = document.getElementById('receiptModalBody');
-  if (bodyEl) {
-    bodyEl.innerHTML = `
-      <div style="text-align:center"><b>ADEM AYEM</b><br><span style="font-size:11px;color:var(--muted)">Jl. Contoh No. 1, Kotamu</span></div>
-      <hr>${receiptRowsHTML(t)}<hr>
-      <div style="text-align:center;font-size:11.5px;">Terima kasih atas kunjungan Anda<br>Simpan struk ini sebagai bukti</div>`;
-  }
-
-  const qrEl = document.getElementById('fakeQr');
-  if (qrEl) {
-    qrEl.innerHTML = buildReceiptQr(t) + `<div style="font-size:11px;color:var(--muted);margin-top:4px;">scan untuk struk digital</div>`;
-  }
+  if (bodyEl) bodyEl.innerHTML = receiptDocHTML(t);
 
   const receiptModal = document.getElementById('receiptModal');
   if (receiptModal) receiptModal.style.display = 'flex';
 }
 
-function copyReceiptLink(btn) {
-  if (!lastTrx || !lastTrx.receiptUrl) return;
-  const done = () => {
-    if (!btn) return;
-    const old = btn.textContent;
-    btn.textContent = 'Link tersalin';
-    setTimeout(() => { btn.textContent = old; }, 1500);
-  };
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(lastTrx.receiptUrl).then(done);
-    return;
-  }
-  const ta = document.createElement('textarea');
-  ta.value = lastTrx.receiptUrl;
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand('copy');
-  ta.remove();
-  done();
-}
-
+// Cetak lewat iframe tersembunyi supaya hanya struk yang tercetak
 function printLastReceipt() {
   if (!lastTrx) return;
-  const printEl = document.getElementById('receiptPrint');
-  if (printEl) {
-    printEl.innerHTML = `
-      <div class="receipt">
-        <div class="center"><b>ADEM AYEM</b><br><span style="font-size:10.5px;">Jl. Contoh No. 1, Kotamu</span></div>
-        <hr>${receiptRowsHTML(lastTrx)}<hr>
-        <div class="center" style="margin-bottom:8px;">Terima kasih atas kunjungan Anda<br>Simpan struk ini sebagai bukti</div>
-        <div class="center">${buildReceiptQr(lastTrx)}</div>
-        <div class="center" style="font-size:10.5px;margin-top:4px;">scan untuk struk digital</div>
-      </div>`;
-  }
-  document.body.classList.add('print-receipt-mode');
-  window.print();
+
+  const old = document.getElementById('printFrame');
+  if (old) old.remove();
+
+  const frame = document.createElement('iframe');
+  frame.id = 'printFrame';
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(frame);
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Struk Pembayaran</title>
+<style>
+  @page { size: 80mm auto; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:4mm; width:80mm; font-family:'Courier New',monospace; font-size:12px; color:#000; }
+  .rline { display:flex; justify-content:space-between; padding:1px 0; }
+  hr { border:none; border-top:1px dashed #000; margin:6px 0; }
+  .center { text-align:center; }
+</style>
+</head>
+<body>
+  ${receiptDocHTML(lastTrx)}
+</body>
+</html>`);
+  doc.close();
+
+  setTimeout(() => {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+  }, 300);
 }
 
 window.addEventListener('afterprint', () => document.body.classList.remove('print-receipt-mode'));

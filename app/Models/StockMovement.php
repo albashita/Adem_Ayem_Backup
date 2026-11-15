@@ -4,35 +4,22 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class StockMovement extends Model
+class StockOut extends Model
 {
-    protected $table = 'stock_movements';
+    protected $table = 'ms_stok_keluar';
+    protected $primaryKey = 'id_stok_keluar';
 
-    protected $primaryKey = 'id_stock_movements';
+    protected $fillable = ['id_bahan', 'id_user', 'jumlah', 'alasan', 'keterangan'];
 
-    // Tabel hanya punya created_at, tidak ada updated_at
-    const UPDATED_AT = null;
-
-    protected $fillable = [
-        'type',
-        'quantity',
-        'source_type',
-        'description',
-        'users_id_user',
-        'stock_items_id_stock_item',
-    ];
-
-    protected $casts = [
-        'quantity' => 'integer',
-    ];
+    protected $casts = ['jumlah' => 'integer'];
 
     public function stockItem()
     {
-        return $this->belongsTo(StockItem::class, 'stock_items_id_stock_item', 'id_stock_item');
+        return $this->belongsTo(StockItem::class, 'id_bahan', 'id_bahan');
     }
 
     public function user()
     {
-        return $this->belongsTo(User::class, 'users_id_user', 'id_user');
+        return $this->belongsTo(User::class, 'id_user', 'id_user');
     }
 }

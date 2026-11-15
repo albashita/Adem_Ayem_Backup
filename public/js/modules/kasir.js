@@ -41,7 +41,7 @@ async function loadPosMenu() {
   if (grid) grid.innerHTML = '<div class="empty">Memuat katalog menu & stok...</div>';
   try {
     const res = await fetch(page.dataset.menuUrl, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) throw new Error('Gagal memuat katalog menu.');
+    if (!res.ok) throw new Error('Gagal memuat katalog menu (kode ' + res.status + ').');
     const data = await res.json();
     posMenu = data.map(m => ({
       id: String(m.id),
@@ -114,9 +114,9 @@ function renderPOS() {
 
   const search = (document.getElementById('posSearch')?.value || '').toLowerCase();
   const filtered = menu.filter(p =>
-  (currentPosCategory === 'semua' || p.category === currentPosCategory) &&
-  (p.name.toLowerCase().includes(search) || (p.kode_menu || p.code || '').toLowerCase().includes(search))
-);
+    (currentPosCategory === 'semua' || p.category === currentPosCategory) &&
+    (p.name.toLowerCase().includes(search) || (p.kode_menu || p.code || '').toLowerCase().includes(search))
+  );
 
   const grid = document.getElementById('posProductGrid');
   if (grid) {
@@ -127,6 +127,8 @@ function renderPOS() {
 
           if (!p.has_recipe) {
             stockHtml = `<span class="stock-badge stock-norecipe">Tanpa resep</span>`;
+          } else if (p.stock_estimate === null) {
+            stockHtml = `<span class="stock-badge stock-ok">Tersedia</span>`;
           } else if (p.stock_estimate === 0) {
             stockHtml = `<span class="stock-badge stock-out">Stok Habis</span>`;
           } else if (p.stock_estimate <= 3) {
@@ -307,12 +309,21 @@ async function saveOrder() {
       })
     });
 
-    const data = await res.json();
+    // Balasan bisa bukan JSON (mis. sesi habis), jadi jangan langsung dipercaya
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* biarkan kosong */ }
+
     if (!res.ok) {
-      triggerAlertModal(
-        data.errors ? Object.values(data.errors)[0][0] : (data.message || 'Gagal menyimpan pesanan.'),
-        'Gagal'
-      );
+      const msg = data.errors
+        ? Object.values(data.errors)[0][0]
+        : (data.message || (res.status === 419
+            ? 'Sesi habis. Muat ulang halaman lalu login kembali.'
+            : 'Gagal menyimpan pesanan (kode ' + res.status + ').'));
+
+      triggerAlertModal(msg, 'Gagal');
+
+      // Stok mungkin berubah, segarkan estimasi di katalog
+      if (res.status === 422) refreshStockEstimates();
       return;
     }
 
@@ -325,7 +336,7 @@ async function saveOrder() {
       });
     }
 
-    // Reset keranjang belanja setelah sukses simpan
+    // Reset keranjang setelah sukses simpan
     cart = [];
     appliedDiscount = 0;
     const discInput = document.getElementById('discountInput');

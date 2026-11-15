@@ -9,7 +9,7 @@ use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
-    private const ROLES = ['owner', 'admin', 'kasir'];
+    private const ROLES = ['superadmin', 'admin', 'kasir'];
 
     public function index()
     {
@@ -22,13 +22,18 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'name'     => ['required', 'string', 'max:75'],
-            'username' => ['required', 'string', 'max:30', 'unique:users,username'],
+            'name'     => ['required', 'string', 'max:45'],
+            'username' => ['required', 'string', 'max:30', 'unique:ms_user,username'],
             'password' => ['required', 'string', 'min:6', 'max:50'],
             'role'     => ['required', Rule::in(self::ROLES)],
         ]);
 
-        User::create($data);
+        User::create([
+            'nama'     => $data['name'],
+            'username' => $data['username'],
+            'password' => $data['password'],
+            'role'     => $data['role'],
+        ]);
 
         return redirect()->route('pengguna.index')->with('success', 'Pengguna berhasil ditambahkan.');
     }
@@ -36,18 +41,32 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
         $data = $request->validate([
-            'name'     => ['required', 'string', 'max:75'],
+            'name'     => ['required', 'string', 'max:45'],
             'username' => ['required', 'string', 'max:30',
-                           Rule::unique('users', 'username')->ignore($user->id_user, 'id_user')],
+                           Rule::unique('ms_user', 'username')->ignore($user->id_user, 'id_user')],
             'password' => ['nullable', 'string', 'min:6', 'max:50'],
             'role'     => ['required', Rule::in(self::ROLES)],
         ]);
 
-        if (empty($data['password'])) {
-            unset($data['password']); // kosong = password tidak diubah
+        // DIUBAH: Owner tidak boleh menurunkan role akunnya sendiri
+        if ($user->id_user === $request->user()->id_user && $data['role'] !== $user->role) {
+            return back()
+                ->withInput()
+                ->withErrors(['role' => 'Anda tidak bisa mengubah role akun sendiri.']);
         }
 
-        $user->update($data);
+        $payload = [
+            'nama'     => $data['name'],
+            'username' => $data['username'],
+            'role'     => $data['role'],
+        ];
+
+        // kosong = password tidak diubah
+        if (! empty($data['password'])) {
+            $payload['password'] = $data['password'];
+        }
+
+        $user->update($payload);
 
         return redirect()->route('pengguna.index')->with('success', 'Pengguna berhasil diperbarui.');
     }

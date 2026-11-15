@@ -2,29 +2,30 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Category;
 use App\Models\Menu;
 use App\Models\MenuIngredient;
 use App\Models\StockItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class MenuController extends Controller
 {
+    private const STATUS = ['tersedia', 'kosong'];
+
     public function index()
     {
-        $menus = Menu::with('category')
-            ->orderBy('id_menu')
-            ->get();
-
-        $categories = Category::where('is_active', 1)
-            ->orderBy('name')
-            ->get();
+        // Kategori sekarang berupa enum, bukan tabel.
+        // Daftar menu dimuat lewat endpoint menu.data (JavaScript).
+        $categories = collect(Menu::KATEGORI)->map(fn ($k) => (object) [
+            'id_categorie' => $k,
+            'name'         => ucfirst($k),
+            'is_active'    => 1,
+        ]);
 
         return view('menu.index', [
-            'pageKey' => 'menu',
-            'menus' => $menus,
+            'pageKey'    => 'menu',
             'categories' => $categories,
         ]);
     }
@@ -36,34 +37,40 @@ class MenuController extends Controller
         }
 
         $validated = $request->validate([
-            'kode_menu' => 'required|string|max:30|unique:menus,kode_menu',
-            'name' => 'required|string|max:20',
-            'description' => 'nullable|string|max:200',
-            'price' => 'required|integer|min:1',
-            'categories_id_categorie' => 'required|integer|exists:categories,id_categorie',
-            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            // Kode boleh kosong, nanti dibuat otomatis (MN001, MN002, ...)
+            'kode_menu'               => 'nullable|string|max:10|unique:ms_menu,kode_menu',
+            'name'                    => 'required|string|max:45',
+            'description'             => 'nullable|string|max:200',
+            'price'                   => 'required|integer|min:1',
+            'biaya_kemasan'           => 'nullable|integer|min:0',
+            'categories_id_categorie' => ['required', Rule::in(Menu::KATEGORI)],
+            'image'                   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
         ], [
-            'kode_menu.required' => 'Kode menu wajib diisi.',
             'kode_menu.unique' => 'Kode menu sudah digunakan.',
-            'name.required' => 'Nama menu wajib diisi.',
-            'price.required' => 'Harga wajib diisi.',
+            'kode_menu.max'    => 'Kode menu maksimal 10 karakter.',
+            'name.required'    => 'Nama menu wajib diisi.',
+            'price.required'   => 'Harga wajib diisi.',
         ]);
 
-        if ($request->hasFile('image')) {
-            $validated['image'] = $request->file('image')
-                ->store('menus', 'public');
-        } else {
-            unset($validated['image']);
-        }
+        $imagePath = $request->hasFile('image')
+            ? $request->file('image')->store('menus', 'public')
+            : '';
 
-        $validated['is_active'] = true;
-
-        $menu = Menu::create($validated);
+        $menu = Menu::create([
+            'kode_menu'     => $validated['kode_menu'] ?? $this->nextKode(),
+            'nama_menu'     => $validated['name'],
+            'kategori'      => $validated['categories_id_categorie'],
+            'harga'         => $validated['price'],
+            'deskripsi'     => $validated['description'] ?? '',
+            'image'         => $imagePath,
+            'status'        => 'tersedia',
+            'biaya_kemasan' => $validated['biaya_kemasan'] ?? 0,
+        ]);
 
         return response()->json([
-            'message' => 'Menu berhasil ditambahkan.',
-            'menu' => $menu->load('category'),
-            'code' => $menu->code,
+            'message'   => 'Menu berhasil ditambahkan.',
+            'menu'      => $menu,
+            'code'      => $menu->code,
             'kode_menu' => $menu->kode_menu,
         ], 201);
     }
@@ -75,36 +82,57 @@ class MenuController extends Controller
         }
 
         $validated = $request->validate([
-            'kode_menu' => 'sometimes|required|string|max:30|unique:menus,kode_menu,'.$menu->id_menu.',id_menu',
-            'name' => 'required|string|max:20',
-            'description' => 'nullable|string|max:200',
-            'price' => 'required|integer|min:1',
-            'categories_id_categorie' => 'required|integer|exists:categories,id_categorie',
-            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'kode_menu'               => 'sometimes|required|string|max:10|unique:ms_menu,kode_menu,' . $menu->id_menu . ',id_menu',
+            'name'                    => 'required|string|max:45',
+            'description'             => 'nullable|string|max:200',
+            'price'                   => 'required|integer|min:1',
+            'biaya_kemasan'           => 'nullable|integer|min:0',
+            'status'                  => ['sometimes', Rule::in(self::STATUS)],
+            'categories_id_categorie' => ['required', Rule::in(Menu::KATEGORI)],
+            'image'                   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
         ], [
             'kode_menu.required' => 'Kode menu wajib diisi.',
-            'kode_menu.unique' => 'Kode menu sudah digunakan.',
-            'name.required' => 'Nama menu wajib diisi.',
-            'price.required' => 'Harga wajib diisi.',
+            'kode_menu.unique'   => 'Kode menu sudah digunakan.',
+            'kode_menu.max'      => 'Kode menu maksimal 10 karakter.',
+            'name.required'      => 'Nama menu wajib diisi.',
+            'price.required'     => 'Harga wajib diisi.',
         ]);
+
+        $payload = [
+            'nama_menu' => $validated['name'],
+            'kategori'  => $validated['categories_id_categorie'],
+            'harga'     => $validated['price'],
+            'deskripsi' => $validated['description'] ?? '',
+        ];
+
+        if (isset($validated['kode_menu'])) {
+            $payload['kode_menu'] = $validated['kode_menu'];
+        }
+
+        if (isset($validated['biaya_kemasan'])) {
+            $payload['biaya_kemasan'] = $validated['biaya_kemasan'];
+        }
+
+        // Menu yang sempat dinonaktifkan bisa diaktifkan lagi
+        if (isset($validated['status'])) {
+            $payload['status'] = $validated['status'];
+        }
 
         if ($request->hasFile('image')) {
             if ($menu->image) {
                 Storage::disk('public')->delete($menu->image);
             }
-
-            $validated['image'] = $request->file('image')
-                ->store('menus', 'public');
-        } else {
-            unset($validated['image']);
+            $payload['image'] = $request->file('image')->store('menus', 'public');
         }
 
-        $menu->update($validated);
+        $menu->update($payload);
+
+        $menu = $menu->fresh();
 
         return response()->json([
-            'message' => 'Menu berhasil diperbarui.',
-            'menu' => $menu->fresh()->load('category'),
-            'code' => $menu->code,
+            'message'   => 'Menu berhasil diperbarui.',
+            'menu'      => $menu,
+            'code'      => $menu->code,
             'kode_menu' => $menu->kode_menu,
         ]);
     }
@@ -112,47 +140,31 @@ class MenuController extends Controller
     public function destroy(Menu $menu)
     {
         return DB::transaction(function () use ($menu) {
-            // Cek apakah menu memiliki ketergantungan data transaksi atau riwayat produksi
-            $hasOrderItems = DB::table('order_items')
-                ->where('menus_id_menu', $menu->id_menu)
-                ->exists();
+            // Menu yang sudah punya riwayat (penjualan atau stok) tidak boleh dihapus
+            $hasHistory = DB::table('tr_penjualan')->where('id_menu', $menu->id_menu)->exists()
+                || DB::table('ms_stok')->where('id_menu', $menu->id_menu)->exists();
 
-            $hasProductionDetails = DB::table('tr_production_details')
-                ->where('menus_id_menu', $menu->id_menu)
-                ->exists();
-
-            $hasSalesDetails = DB::table('tr_sales_details')
-                ->where('menus_id_menu', $menu->id_menu)
-                ->exists();
-
-            $hasHistoricalData = $hasOrderItems || $hasProductionDetails || $hasSalesDetails;
-
-            if ($hasHistoricalData) {
-                // Menu memiliki riwayat transaksi/produksi, nonaktifkan (soft deactivate) agar riwayat tidak rusak
-                $menu->update(['is_active' => false]);
+            if ($hasHistory) {
+                $menu->update(['status' => 'kosong']);
 
                 return response()->json([
-                    'action' => 'deactivated',
-                    'message' => "Menu '{$menu->name}' telah memiliki riwayat transaksi/produksi, sehingga statusnya otomatis dinonaktifkan agar tidak merusak data historis.",
+                    'action'  => 'deactivated',
+                    'message' => "Menu '{$menu->name}' telah memiliki riwayat transaksi, sehingga statusnya otomatis dinonaktifkan agar tidak merusak data historis.",
                 ]);
             }
 
-            // Hapus seluruh relasi resep menu dari menu_ingredients
-            MenuIngredient::where('menus_id_menu', $menu->id_menu)->delete();
+            MenuIngredient::where('id_menu', $menu->id_menu)->delete();
 
-            // Simpan path foto untuk dihapus setelah record database berhasil dihapus
             $imagePath = $menu->image;
 
-            // Hapus data menu dari database
             $menu->delete();
 
-            // Hapus file gambar jika ada
             if ($imagePath && Storage::disk('public')->exists($imagePath)) {
                 Storage::disk('public')->delete($imagePath);
             }
 
             return response()->json([
-                'action' => 'deleted',
+                'action'  => 'deleted',
                 'message' => 'Menu beserta resepnya berhasil dihapus.',
             ]);
         });
@@ -160,17 +172,10 @@ class MenuController extends Controller
 
     public function data()
     {
-        $menus = Menu::with('category')
-            ->orderBy('id_menu')
+        $menus = Menu::orderBy('id_menu')
             ->get()
             ->map(function ($menu) {
-                $menu->image_url = (
-                    $menu->image &&
-                    str_starts_with($menu->image, 'menus/') &&
-                    Storage::disk('public')->exists($menu->image)
-                )
-                    ? Storage::disk('public')->url($menu->image)
-                    : null;
+                $menu->image_url = $this->imageUrl($menu->image);
 
                 return $menu;
             });
@@ -178,178 +183,143 @@ class MenuController extends Controller
         return response()->json($menus);
     }
 
+    /**
+     * Estimasi jumlah porsi yang masih bisa dibuat dari stok bahan.
+     * null = menu belum punya resep.
+     */
+    private function estimatePortions(Menu $menu): ?int
+    {
+        if ($menu->ingredients->isEmpty()) {
+            return null;
+        }
+
+        $min = PHP_INT_MAX;
+
+        foreach ($menu->ingredients as $ingredient) {
+            $stockItem = $ingredient->stockItem;
+
+            if (! $stockItem || ! $stockItem->is_active) {
+                return 0;
+            }
+
+            $need = $ingredient->quantity_required;
+            if ($need <= 0) {
+                continue; // hindari pembagian nol
+            }
+
+            $min = min($min, (int) floor(max(0, $stockItem->current_stock) / $need));
+        }
+
+        return $min === PHP_INT_MAX ? null : $min;
+    }
+
     // Data menu untuk halaman Kasir (hanya menu aktif) beserta estimasi porsi
     public function kasirData()
     {
-        $menus = Menu::with(['category', 'ingredients.stockItem'])
-            ->where('is_active', 1)
-            ->orderBy('name')
+        $menus = Menu::with(['ingredients.stockItem'])
+            ->where('status', 'tersedia')
+            ->orderBy('nama_menu')
             ->get()
-            ->map(function ($menu) {
-                $hasRecipe = $menu->ingredients->isNotEmpty();
-                $stockEstimate = null;
-
-                if ($hasRecipe) {
-                    $minPortions = PHP_INT_MAX;
-                    foreach ($menu->ingredients as $ingredient) {
-                        $stockItem = $ingredient->stockItem;
-                        if (! $stockItem || ! $stockItem->is_active) {
-                            $minPortions = 0;
-                            break;
-                        }
-
-                        $qtyRequired = (float) $ingredient->quantity_required;
-                        if ($qtyRequired <= 0) {
-                            continue; // Hindari pembagian nol
-                        }
-
-                        $currentStock = (float) $stockItem->current_stock;
-                        $portions = (int) floor(max(0, $currentStock) / $qtyRequired);
-                        $minPortions = min($minPortions, $portions);
-                    }
-
-                    $stockEstimate = ($minPortions === PHP_INT_MAX) ? null : $minPortions;
-                }
-
-                return [
-                    'id' => $menu->id_menu,
-                    'code' => $menu->code,
-                    'kode_menu' => $menu->kode_menu,
-                    'name' => $menu->name,
-                    'price' => $menu->price,
-                    'category_id' => $menu->categories_id_categorie,
-                    'category' => $menu->category?->name,
-                    'has_recipe' => $hasRecipe,
-                    'stock_estimate' => $stockEstimate,
-                    'image_url' => (
-                        $menu->image &&
-                        Storage::disk('public')->exists($menu->image)
-                    )
-                        ? Storage::disk('public')->url($menu->image)
-                        : null,
-                ];
-            });
+            ->map(fn ($menu) => [
+                'id'             => $menu->id_menu,
+                'code'           => $menu->code,
+                'kode_menu'      => $menu->kode_menu,
+                'name'           => $menu->name,
+                'price'          => $menu->price,
+                'packaging_cost' => (int) $menu->biaya_kemasan,
+                'category_id'    => $menu->kategori,
+                'category'       => ucfirst($menu->kategori),
+                'has_recipe'     => $menu->ingredients->isNotEmpty(),
+                'stock_estimate' => $this->estimatePortions($menu),
+                'image_url'      => $this->imageUrl($menu->image),
+            ]);
 
         return response()->json($menus);
     }
 
     /**
-     * Endpoint ringan untuk memperbarui estimasi porsi seluruh menu aktif
+     * Endpoint ringan untuk memperbarui estimasi porsi seluruh menu aktif.
      */
     public function stockEstimates()
     {
         $menus = Menu::with(['ingredients.stockItem'])
-            ->where('is_active', 1)
+            ->where('status', 'tersedia')
             ->get()
-            ->map(function ($menu) {
-                $hasRecipe = $menu->ingredients->isNotEmpty();
-                $stockEstimate = null;
-
-                if ($hasRecipe) {
-                    $minPortions = PHP_INT_MAX;
-                    foreach ($menu->ingredients as $ingredient) {
-                        $stockItem = $ingredient->stockItem;
-                        if (! $stockItem || ! $stockItem->is_active) {
-                            $minPortions = 0;
-                            break;
-                        }
-
-                        $qtyRequired = (float) $ingredient->quantity_required;
-                        if ($qtyRequired <= 0) {
-                            continue;
-                        }
-
-                        $currentStock = (float) $stockItem->current_stock;
-                        $portions = (int) floor(max(0, $currentStock) / $qtyRequired);
-                        $minPortions = min($minPortions, $portions);
-                    }
-
-                    $stockEstimate = ($minPortions === PHP_INT_MAX) ? null : $minPortions;
-                }
-
-                return [
-                    'id' => $menu->id_menu,
-                    'has_recipe' => $hasRecipe,
-                    'stock_estimate' => $stockEstimate,
-                ];
-            });
+            ->map(fn ($menu) => [
+                'id'             => $menu->id_menu,
+                'has_recipe'     => $menu->ingredients->isNotEmpty(),
+                'stock_estimate' => $this->estimatePortions($menu),
+            ]);
 
         return response()->json($menus);
     }
 
+    private function mapIngredients(Menu $menu)
+    {
+        return $menu->ingredients()
+            ->with('stockItem')
+            ->get()
+            ->map(fn ($ing) => [
+                'id_menu_ingredient' => $ing->id_resep,
+                'id_stock_item'      => $ing->id_bahan,
+                'name'               => $ing->stockItem?->name ?? 'Bahan tidak ditemukan',
+                'unit'               => $ing->stockItem?->unit ?? '-',
+                'quantity_required'  => $ing->quantity_required,
+                'current_stock'      => $ing->stockItem?->current_stock ?? 0,
+            ]);
+    }
+
     /**
-     * Dapatkan data resep untuk menu tertentu beserta daftar bahan baku yang tersedia.
+     * Data resep satu menu beserta daftar bahan baku yang tersedia.
      */
     public function getRecipe(Request $request, Menu $menu)
     {
-        if ($request->user()->role !== 'owner') {
-            abort(403, 'Hanya Owner yang dapat mengakses pengaturan resep.');
-        }
+        $this->ensureOwner($request, 'Hanya Owner yang dapat mengakses pengaturan resep.');
 
-        $ingredients = $menu->ingredients()
-            ->with('stockItem')
+        $availableStockItems = StockItem::where('status', 'aktif')
+            ->orderBy('nama_bahan')
             ->get()
-            ->map(function ($ing) {
-                return [
-                    'id_menu_ingredient' => $ing->id_menu_ingredient,
-                    'id_stock_item' => $ing->stock_items_id_stock_item,
-                    'name' => $ing->stockItem?->name ?? 'Bahan tidak ditemukan',
-                    'unit' => $ing->stockItem?->unit ?? '-',
-                    'quantity_required' => (float) $ing->quantity_required,
-                    'current_stock' => $ing->stockItem?->current_stock ?? 0,
-                ];
-            });
-
-        $availableStockItems = StockItem::where('is_active', true)
-            ->orderBy('name')
-            ->get(['id_stock_item', 'name', 'unit', 'current_stock'])
-            ->map(function ($item) {
-                return [
-                    'id_stock_item' => $item->id_stock_item,
-                    'name' => $item->name,
-                    'unit' => $item->unit,
-                    'current_stock' => $item->current_stock,
-                ];
-            });
+            ->map(fn ($item) => [
+                'id_stock_item' => $item->id_bahan,
+                'name'          => $item->name,
+                'unit'          => $item->unit,
+                'current_stock' => $item->current_stock,
+            ]);
 
         return response()->json([
             'menu' => [
-                'id_menu' => $menu->id_menu,
-                'name' => $menu->name,
-                'code' => $menu->code,
+                'id_menu'   => $menu->id_menu,
+                'name'      => $menu->name,
+                'code'      => $menu->code,
                 'kode_menu' => $menu->kode_menu,
-                'price' => $menu->price,
+                'price'     => $menu->price,
             ],
-            'ingredients' => $ingredients,
+            'ingredients'           => $this->mapIngredients($menu),
             'available_stock_items' => $availableStockItems,
         ]);
     }
 
     /**
-     * Simpan pengaturan resep menu.
-     * Tidak mengubah stok bahan baku di stock_items.
+     * Simpan resep menu. Tidak mengubah stok bahan baku.
      */
     public function saveRecipe(Request $request, Menu $menu)
     {
-        if ($request->user()->role !== 'owner') {
-            abort(403, 'Hanya Owner yang dapat mengatur resep menu.');
-        }
+        $this->ensureOwner($request, 'Hanya Owner yang dapat mengatur resep menu.');
 
         $validated = $request->validate([
-            'ingredients' => 'nullable|array',
-            'ingredients.*.id_stock_item' => 'required|integer|exists:stock_items,id_stock_item',
+            'ingredients'                     => 'nullable|array',
+            'ingredients.*.id_stock_item'     => 'required|integer|exists:ms_bahan,id_bahan',
             'ingredients.*.quantity_required' => 'required|numeric|gt:0',
         ], [
-            'ingredients.*.id_stock_item.required' => 'Bahan baku wajib dipilih.',
-            'ingredients.*.id_stock_item.exists' => 'Bahan baku tidak valid.',
+            'ingredients.*.id_stock_item.required'     => 'Bahan baku wajib dipilih.',
+            'ingredients.*.id_stock_item.exists'       => 'Bahan baku tidak valid.',
             'ingredients.*.quantity_required.required' => 'Jumlah bahan baku wajib diisi.',
-            'ingredients.*.quantity_required.numeric' => 'Jumlah bahan baku harus berupa angka.',
-            'ingredients.*.quantity_required.gt' => 'Jumlah bahan baku harus lebih besar dari 0.',
+            'ingredients.*.quantity_required.numeric'  => 'Jumlah bahan baku harus berupa angka.',
+            'ingredients.*.quantity_required.gt'       => 'Jumlah bahan baku harus lebih besar dari 0.',
         ]);
 
         $ingredientsData = $validated['ingredients'] ?? [];
 
-        // Validasi duplikasi bahan baku dalam resep
         $stockIds = array_column($ingredientsData, 'id_stock_item');
         if (count($stockIds) !== count(array_unique($stockIds))) {
             return response()->json([
@@ -357,16 +327,18 @@ class MenuController extends Controller
             ], 422);
         }
 
-        // Bahan baku yang dinonaktifkan tidak dapat dipilih untuk resep baru
-        $existingStockIds = MenuIngredient::where('menus_id_menu', $menu->id_menu)
-            ->pluck('stock_items_id_stock_item')
+        // Bahan nonaktif tidak boleh dipilih untuk resep baru
+        $existingStockIds = MenuIngredient::where('id_menu', $menu->id_menu)
+            ->pluck('id_bahan')
+            ->map(fn ($v) => (int) $v)
             ->toArray();
 
         foreach ($ingredientsData as $item) {
-            if (! in_array($item['id_stock_item'], $existingStockIds)) {
+            if (! in_array((int) $item['id_stock_item'], $existingStockIds, true)) {
                 $stockItem = StockItem::find($item['id_stock_item']);
                 if (! $stockItem || ! $stockItem->is_active) {
                     $name = $stockItem ? $stockItem->name : 'Bahan baku';
+
                     return response()->json([
                         'message' => "Bahan baku '{$name}' sudah nonaktif dan tidak dapat dipilih untuk resep baru.",
                     ], 422);
@@ -375,36 +347,23 @@ class MenuController extends Controller
         }
 
         DB::transaction(function () use ($menu, $ingredientsData) {
-            // Hapus resep lama menu ini (tanpa mengubah stok barang)
-            MenuIngredient::where('menus_id_menu', $menu->id_menu)->delete();
+            MenuIngredient::where('id_menu', $menu->id_menu)->delete();
 
-            // Masukkan data bahan baru
             foreach ($ingredientsData as $item) {
+                [$bahan, $produk] = MenuIngredient::splitPerPortion((float) $item['quantity_required']);
+
                 MenuIngredient::create([
-                    'menus_id_menu' => $menu->id_menu,
-                    'stock_items_id_stock_item' => $item['id_stock_item'],
-                    'quantity_required' => $item['quantity_required'],
+                    'id_menu'       => $menu->id_menu,
+                    'id_bahan'      => $item['id_stock_item'],
+                    'jumlah_bahan'  => $bahan,
+                    'jumlah_produk' => $produk,
                 ]);
             }
         });
 
-        $updatedIngredients = $menu->ingredients()
-            ->with('stockItem')
-            ->get()
-            ->map(function ($ing) {
-                return [
-                    'id_menu_ingredient' => $ing->id_menu_ingredient,
-                    'id_stock_item' => $ing->stock_items_id_stock_item,
-                    'name' => $ing->stockItem?->name ?? 'Bahan tidak ditemukan',
-                    'unit' => $ing->stockItem?->unit ?? '-',
-                    'quantity_required' => (float) $ing->quantity_required,
-                    'current_stock' => $ing->stockItem?->current_stock ?? 0,
-                ];
-            });
-
         return response()->json([
-            'message' => 'Resep menu berhasil disimpan.',
-            'ingredients' => $updatedIngredients,
+            'message'     => 'Resep menu berhasil disimpan.',
+            'ingredients' => $this->mapIngredients($menu),
         ]);
     }
 
@@ -413,11 +372,9 @@ class MenuController extends Controller
      */
     public function destroyRecipeIngredient(Request $request, Menu $menu, MenuIngredient $ingredient)
     {
-        if ($request->user()->role !== 'owner') {
-            abort(403, 'Hanya Owner yang dapat mengatur resep menu.');
-        }
+        $this->ensureOwner($request, 'Hanya Owner yang dapat mengatur resep menu.');
 
-        if ($ingredient->menus_id_menu !== $menu->id_menu) {
+        if ((int) $ingredient->id_menu !== (int) $menu->id_menu) {
             return response()->json([
                 'message' => 'Bahan tidak terkait dengan menu ini.',
             ], 422);
@@ -428,5 +385,34 @@ class MenuController extends Controller
         return response()->json([
             'message' => 'Bahan berhasil dihapus dari resep.',
         ]);
+    }
+
+    /* ------------------------------------------------------------ HELPER */
+
+    // Pengaturan resep hanya untuk Owner (superadmin)
+    private function ensureOwner(Request $request, string $message): void
+    {
+        if ($request->user()->role !== 'superadmin') {
+            abort(403, $message);
+        }
+    }
+
+    // asset() memakai alamat yang sedang dibuka, jadi gambar tetap tampil di 127.0.0.1 maupun lewat IP laptop (HP)
+    private function imageUrl(?string $path): ?string
+    {
+        return ($path && Storage::disk('public')->exists($path))
+            ? asset('storage/' . $path)
+            : null;
+    }
+
+    // Kode otomatis berikutnya, mis. MN014
+    private function nextKode(): string
+    {
+        $max = (int) DB::table('ms_menu')
+            ->where('kode_menu', 'like', 'MN%')
+            ->selectRaw('MAX(CAST(SUBSTRING(kode_menu, 3) AS UNSIGNED)) as n')
+            ->value('n');
+
+        return 'MN' . str_pad((string) ($max + 1), 3, '0', STR_PAD_LEFT);
     }
 }

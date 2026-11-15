@@ -19,7 +19,7 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        if (Auth::attempt($credentials + ['is_active' => 1])) {
+        if (Auth::attempt($credentials + ['status' => 'aktif'])) {
             $request->session()->regenerate();
 
             return redirect($this->homeByRole(Auth::user()->role));
@@ -43,7 +43,7 @@ class AuthController extends Controller
     {
         return match ($role) {
             'kasir' => route('kasir.index'),
-            default => route('dashboard'), // owner dan admin
+            default => route('dashboard'), // superadmin dan admin
         };
     }
 }

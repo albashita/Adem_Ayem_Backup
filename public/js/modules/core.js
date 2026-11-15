@@ -1,15 +1,14 @@
 /**
  * Adem Ayem - Core Module
- * Pengelolaan state LocalStorage, fungsi utilitas dasar, autentikasi sesi, dan navigasi sidebar.
+ * Pengelolaan state LocalStorage, fungsi utilitas dasar, dan navigasi sidebar.
+ * Login dan data pengguna ditangani server (Laravel), bukan localStorage.
  */
 
-// LocalStorage Keys
-const LSU = 'kasir_users';
+// LocalStorage Keys (data menu/stok/transaksi masih dipakai modul lain)
 const LSM = 'kasir_menu';
 const LST = 'kasir_transactions';
 const LSL = 'kasir_stocklog';
 const LSI = 'kasir_inventory';
-const LSS = 'kasir_session';
 
 // Navigasi & Role (urutan di sini = urutan menu di sidebar)
 const NAV = [
@@ -33,28 +32,19 @@ const CAT_LABEL = {
   gudang: 'Gudang'
 };
 
+// DIUBAH: label disamakan dengan halaman Pengguna (Owner / Admin / Kasir)
+const ROLE_LABEL = { superadmin: 'Owner', administrator: 'Admin', kasir: 'Kasir' };
+
+// Teks chip di navbar, mis. "Ines (Owner)"
+function userChipText(user) {
+  return user.name + ' (' + (ROLE_LABEL[user.role] || user.role) + ')';
+}
 
 // Inisialisasi data bawaan di LocalStorage jika belum ada
 function seedIfEmpty() {
-  {
-    const us = JSON.parse(localStorage.getItem(LSU) || '[]');
-    let ch = false;
-    us.forEach(u => {
-      if (u.username === 'kasir' && u.name === 'Kasir Toko') {
-        u.name = 'Adem Ayem';
-        ch = true;
-      }
-    });
-    if (ch) localStorage.setItem(LSU, JSON.stringify(us));
-  }
-
-  if (!localStorage.getItem(LSU)) {
-    localStorage.setItem(LSU, JSON.stringify([
-      { id: 'u1', name: 'Super Admin', username: 'superadmin', password: 'super123', role: 'superadmin' },
-      { id: 'u2', name: 'Administrator', username: 'administrator', password: 'admin123', role: 'administrator' },
-      { id: 'u3', name: 'Adem Ayem', username: 'kasir', password: 'kasir123', role: 'kasir' }
-    ]));
-  }
+  // DIUBAH: hapus sisa akun lama (berisi password teks biasa) dari browser
+  localStorage.removeItem('kasir_users');
+  sessionStorage.removeItem('kasir_session');
 
   if (!localStorage.getItem(LSM)) {
     localStorage.setItem(LSM, JSON.stringify([
@@ -84,9 +74,7 @@ function seedIfEmpty() {
   }
 }
 
-// Helpers LocalStorage
-function getUsers() { return JSON.parse(localStorage.getItem(LSU) || '[]'); }
-function setUsers(u) { localStorage.setItem(LSU, JSON.stringify(u)); }
+// Helpers LocalStorage (DIUBAH: getUsers/setUsers dihapus)
 function getMenu() { return JSON.parse(localStorage.getItem(LSM) || '[]'); }
 function setMenu(m) { localStorage.setItem(LSM, JSON.stringify(m)); }
 function getTrx() { return JSON.parse(localStorage.getItem(LST) || '[]'); }
@@ -125,22 +113,7 @@ function currentUser() {
   return (typeof SERVER_USER !== 'undefined') ? SERVER_USER : undefined;
 }
 
-// Autentikasi Frontend & Logout
-function doLogin() {
-  const u = document.getElementById('loginUser').value.trim();
-  const p = document.getElementById('loginPass').value;
-  const err = document.getElementById('loginError');
-  const found = getUsers().find(x => x.username === u && x.password === p);
-  if (found) {
-    sessionStorage.setItem(LSS, found.id);
-    err.textContent = '';
-    const first = NAV.find(n => n.roles.includes(found.role));
-    window.location.href = ROUTE_URLS[first.key] || ROUTE_URLS.dashboard;
-  } else {
-    err.textContent = 'Username atau password salah.';
-  }
-}
-
+// Logout: kirim form POST ke server
 function logoutUser() {
   const f = document.createElement('form');
   f.method = 'POST';
@@ -165,8 +138,6 @@ const NAV_ICONS = {
   profil:    '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>',
   logout:    '<path d="M9 4H5v16h4"/><path d="M16 8l4 4-4 4M20 12H10"/>'
 };
-
-const ROLE_LABEL = { superadmin: 'Superadmin', administrator: 'Administrator', kasir: 'Kasir' };
 
 function navIcon(key) {
   return '<svg class="navico" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NAV_ICONS[key] || '') + '</svg>';
@@ -206,25 +177,34 @@ function buildSidebar(role) {
   nav.appendChild(lo);
 }
 
+// DIUBAH: pindah halaman hanya kalau tujuannya beda dari halaman sekarang (anti-loop)
+function goTo(url) {
+  if (!url) return;
+  const target = new URL(url, window.location.origin);
+  if (target.pathname === window.location.pathname) return;
+  window.location.href = url;
+}
+
 // Bootstrap halaman utama
 function bootstrapPage() {
   const user = currentUser();
   if (!user) {
-    window.location.href = ROUTE_URLS.login;
+    goTo(ROUTE_URLS.login);
     return;
   }
 
+  // Server sudah menjaga akses lewat middleware; ini hanya lapis cadangan di sisi klien
   const navItem = NAV.find(n => n.key === PAGE_KEY);
   if (!navItem || !navItem.roles.includes(user.role)) {
     const first = NAV.find(n => n.roles.includes(user.role));
-    window.location.href = first ? ROUTE_URLS[first.key] : ROUTE_URLS.login;
+    goTo(first ? ROUTE_URLS[first.key] : ROUTE_URLS.login);
     return;
   }
 
   buildSidebar(user.role);
 
   const userChip = document.getElementById('userChip');
-  if (userChip) userChip.textContent = user.name + ' (' + user.role + ')';
+  if (userChip) userChip.textContent = userChipText(user); // DIUBAH
 
   const titleEl = document.getElementById('pageTitle');
   if (titleEl) titleEl.textContent = titles[PAGE_KEY];

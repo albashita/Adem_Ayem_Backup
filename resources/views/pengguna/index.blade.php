@@ -5,7 +5,15 @@
 
 @section('content')
   {{-- Kalau validasi form gagal, modal dibuka lagi dan error tampil di dalam modal --}}
-  @php $reopenModal = $errors->any() && old('form_mode'); @endphp
+  @php
+    $reopenModal = $errors->any() && old('form_mode');
+
+    // Kelas warna tag (nama kelas CSS tetap seperti sebelumnya)
+    $roleClass = ['superadmin' => 'superadmin', 'admin' => 'administrator', 'kasir' => 'kasir'];
+
+    // Label yang ditampilkan ke pengguna
+    $roleLabel = ['superadmin' => 'Owner', 'admin' => 'Admin', 'kasir' => 'Kasir'];
+  @endphp
 
   @if(session('success'))
     <div class="panel" style="color:var(--ok);font-weight:600">{{ session('success') }}</div>
@@ -30,20 +38,20 @@
       <tbody>
         @forelse($users as $u)
           <tr>
-            <td>{{ $u->name }}</td>
+            <td>{{ $u->nama }}</td>
             <td>{{ $u->username }}</td>
-            <td><span class="tag tag-{{ ['owner'=>'superadmin','admin'=>'administrator','kasir'=>'kasir'][$u->role] ?? 'kasir' }}">{{ ucfirst($u->role) }}</span></td>
+            <td><span class="tag tag-{{ $roleClass[$u->role] ?? 'kasir' }}">{{ $roleLabel[$u->role] ?? ucfirst($u->role) }}</span></td>
             <td class="row-actions">
               <button type="button"
                       data-id="{{ $u->id_user }}"
-                      data-name="{{ $u->name }}"
+                      data-name="{{ $u->nama }}"
                       data-username="{{ $u->username }}"
                       data-role="{{ $u->role }}"
                       onclick="openUbahPengguna(this)">Ubah</button>
 
               <button type="button" class="del"
                       data-id="{{ $u->id_user }}"
-                      data-name="{{ $u->name }}"
+                      data-name="{{ $u->nama }}"
                       onclick="openHapusPengguna(this)">Hapus</button>
             </td>
           </tr>
@@ -75,16 +83,17 @@
         <input type="hidden" name="edit_id" id="fEditId" value="{{ old('edit_id') }}">
 
         <div class="field"><label>Nama</label>
-          <input name="name" id="fName" value="{{ old('name') }}" placeholder="Nama lengkap" required></div>
+          <input name="name" id="fName" value="{{ old('name') }}" placeholder="Nama lengkap" maxlength="45" required></div>
         <div class="field"><label>Username</label>
-          <input name="username" id="fUser" value="{{ old('username') }}" placeholder="username" required></div>
+          <input name="username" id="fUser" value="{{ old('username') }}" placeholder="username" maxlength="30" required></div>
         <div class="field"><label>Password</label>
           <input name="password" id="fPass" type="password" placeholder="min. 6 karakter" required autocomplete="new-password"></div>
         <div class="field"><label>Role</label>
+          {{-- DIUBAH: role bawaan sekarang Kasir --}}
           <select name="role" id="fRole">
-            <option value="owner" {{ old('role', 'owner') === 'owner' ? 'selected' : '' }}>Owner</option>
+            <option value="superadmin" {{ old('role') === 'superadmin' ? 'selected' : '' }}>Owner</option>
             <option value="admin" {{ old('role') === 'admin' ? 'selected' : '' }}>Admin</option>
-            <option value="kasir" {{ old('role') === 'kasir' ? 'selected' : '' }}>Kasir</option>
+            <option value="kasir" {{ old('role', 'kasir') === 'kasir' ? 'selected' : '' }}>Kasir</option>
           </select></div>
 
         <div class="profile-actions">
@@ -135,7 +144,7 @@
 
     function openTambahPengguna(){
       ['fName','fUser','fPass'].forEach(id => document.getElementById(id).value = '');
-      document.getElementById('fRole').value = 'owner';
+      document.getElementById('fRole').value = 'kasir'; // DIUBAH: bawaan Kasir
       setPenggunaMode(null);
       document.getElementById('penggunaModal').style.display = 'flex';
       document.getElementById('fName').focus();

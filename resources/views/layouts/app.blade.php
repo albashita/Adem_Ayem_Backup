@@ -1,9 +1,9 @@
 @php
     $roleMap = [
-        'owner' => 'superadmin',
-        'admin' => 'administrator',
-        'kasir' => 'kasir',
-    ];
+    'superadmin' => 'superadmin',
+    'admin'      => 'administrator',
+    'kasir'      => 'kasir',
+];
 
     $serverUser = [
         'id'       => auth()->user()->id_user,
@@ -97,7 +97,6 @@
     <script src="{{ asset('js/modules/core.js') }}"></script>
     <script src="{{ asset('js/modules/qr-code.js') }}"></script>
     <script src="{{ asset('js/modules/dashboard.js') }}"></script>
-    <script src="{{ asset('js/modules/users.js') }}"></script>
     <script src="{{ asset('js/modules/menu.js') }}"></script>
     <script src="{{ asset('js/modules/stok.js') }}"></script>
     <script src="{{ asset('js/modules/pengeluaran.js') }}"></script>

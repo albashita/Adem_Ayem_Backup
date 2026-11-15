@@ -6,7 +6,8 @@
 @section('content')
 <div class="panel" id="riwayatPage"
      data-list-url="{{ route('riwayat.data', [], false) }}"
-     data-pay-url="{{ url('/riwayat', [], false) }}">
+     data-pay-url="{{ route('riwayat.index', [], false) }}"
+     data-menu-url="{{ route('kasir.menu-data', [], false) }}">
   <div class="panel-header-row">
     <h3>Transaksi Pembayaran</h3>
   </div>
@@ -226,17 +227,65 @@
   </div>
 </div>
 
+{{-- Modal Ubah Pesanan (yang belum dibayar) --}}
+<div id="editOrderModal" class="modal-overlay" style="display:none;" onclick="if(event.target === this) closeEditOrder()">
+  <div class="modal-box" style="max-width:520px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-close" onclick="closeEditOrder()">✕</div>
+
+    <h3 style="margin:0 0 4px;">Ubah Pesanan</h3>
+    <div id="editOrderInfo" style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:12px;"></div>
+
+    <div class="paymethods" id="editTypeToggle" style="margin-bottom:12px;">
+      <button type="button" data-t="dine-in" onclick="setEditType('dine-in')">Makan di Tempat</button>
+      <button type="button" data-t="takeaway" onclick="setEditType('takeaway')">Bawa Pulang</button>
+    </div>
+
+    <div class="field">
+      <label for="editCust">Nama Pelanggan (opsional)</label>
+      <input id="editCust" maxlength="30" placeholder="mis. Bu Rina">
+    </div>
+
+    <div id="editItems" style="margin-bottom:10px;"></div>
+
+    <div class="form-row" style="gap:8px;margin-bottom:12px;align-items:flex-end;">
+      <div class="field" style="flex:1;margin:0;">
+        <label for="editAddMenu">Tambah menu</label>
+        <select id="editAddMenu" style="width:100%;padding:9px 12px;border:1px solid #d5ded8;border-radius:8px;background:white;">
+          <option value="">-- Pilih menu --</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn-outline" onclick="addEditLine()">+ Tambah</button>
+    </div>
+
+    <div class="field">
+      <label for="editDiscount">Diskon (Rp)</label>
+      <input id="editDiscount" type="number" min="0" placeholder="0" oninput="renderEditTotals()">
+    </div>
+
+    <div class="rline-mini"><span>Subtotal</span><span id="editSubtotal">Rp 0</span></div>
+    <div class="total-row"><span>Total</span><span id="editTotal">Rp 0</span></div>
+
+    <div class="error-msg" id="editOrderError" style="margin:10px 0;"></div>
+
+    <div class="form-row" style="gap:10px;">
+      <button type="button" class="btn btn-outline" style="flex:1;" onclick="closeEditOrder()">Batal</button>
+      <button type="button" class="btn btn-primary" id="editSaveBtn" style="flex:2;" onclick="saveEditOrder()">
+        Simpan Perubahan
+      </button>
+    </div>
+  </div>
+</div>
+
 {{-- Modal Struk Pembayaran --}}
 <div id="receiptModal" class="modal-overlay" style="display:none;">
   <div class="modal-box">
     <div class="modal-close" onclick="closeReceiptModal()">✕</div>
     <h3 style="margin-top:0;">Struk Pembayaran</h3>
     <div class="receipt-onscreen" id="receiptModalBody"></div>
-    <div id="fakeQr" style="text-align:center;margin:14px 0;"></div>
-    <div class="form-row" style="margin-top:10px;">
+    <div class="form-row" style="margin-top:14px;">
       <button class="btn btn-primary" style="flex:1;" onclick="printLastReceipt()">Cetak Struk</button>
+      <button class="btn btn-outline" style="flex:1;" onclick="closeReceiptModal()">Tutup</button>
     </div>
-    <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="closeReceiptModal()">Tutup</button>
   </div>
 </div>
 
@@ -248,8 +297,4 @@
     <button class="btn btn-primary" style="width:100%;" onclick="closeAlertModal()">OK</button>
   </div>
 </div>
-
-@push('scripts')
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-@endpush
 @endsection

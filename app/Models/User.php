@@ -4,23 +4,29 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
-#[Fillable(['username', 'name', 'email', 'password', 'role', 'phone', 'address', 'is_active'])]
+#[Fillable(['nama', 'username', 'password', 'role', 'status'])]
 #[Hidden(['password'])]
 class User extends Authenticatable
 {
-    protected $table = 'users';
+    protected $table = 'ms_user';
     protected $primaryKey = 'id_user';
 
-    // tabel users tidak punya kolom remember_token
+    // tabel ms_user tidak punya kolom remember_token
     protected $rememberTokenName = '';
 
     protected function casts(): array
     {
         return [
             'password' => 'hashed',
-            'is_active' => 'boolean',
         ];
+    }
+
+    // Supaya view lama yang memakai $user->name tetap jalan (kolom aslinya: nama)
+    protected function name(): Attribute
+    {
+        return Attribute::get(fn () => $this->nama);
     }
 }

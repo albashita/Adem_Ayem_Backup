@@ -1,9 +1,9 @@
 (function () {
+  // DIUBAH: users.js dihapus dari daftar
   const MODULES = [
     'core.js',
     'qr-code.js',
     'dashboard.js',
-    'users.js',
     'menu.js',
     'stok.js',
     'pengeluaran.js',
@@ -18,25 +18,23 @@
     if (typeof seedIfEmpty === 'function') seedIfEmpty();
     if (typeof ensureMenuCodes === 'function') ensureMenuCodes();
 
-    if (document.getElementById('loginScreen')) {
-      const passEl = document.getElementById('loginPass');
-      if (passEl) {
-        passEl.addEventListener('keydown', e => {
-          if (e.key === 'Enter') doLogin();
-        });
-      }
-    } else if (typeof PAGE_KEY !== 'undefined' && typeof bootstrapPage === 'function') {
+    // DIUBAH: cabang loginScreen/doLogin dihapus (login sekarang halaman Blade + server)
+    if (typeof PAGE_KEY !== 'undefined' && typeof bootstrapPage === 'function') {
       bootstrapPage();
     }
   }
 
-  // Kasus 1: Modul sudah dimuat melalui script tags di Blade
-  if (typeof seedIfEmpty === 'function') {
+  function start() {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', initApp);
     } else {
       initApp();
     }
+  }
+
+  // Kasus 1: Modul sudah dimuat melalui script tags di Blade
+  if (typeof seedIfEmpty === 'function') {
+    start();
     return;
   }
 
@@ -53,13 +51,7 @@
     s.async = false; // Memastikan urutan dependensi terjaga
     s.onload = () => {
       loadedCount++;
-      if (loadedCount === MODULES.length) {
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', initApp);
-        } else {
-          initApp();
-        }
-      }
+      if (loadedCount === MODULES.length) start();
     };
     s.onerror = (e) => {
       console.error('[AdemAyem] Gagal memuat modul:', mod, e);

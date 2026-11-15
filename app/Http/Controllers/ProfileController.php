@@ -12,9 +12,10 @@ class ProfileController extends Controller
         $user = $request->user();
 
         $data = $request->validate([
-            // batas max disamakan dengan kolom di database (name 30, username 25)
-            'name'             => 'required|string|max:30',
-            'username'         => 'required|string|max:25|unique:users,username,' . $user->id_user . ',id_user',
+            // batas max disesuaikan dengan kolom ms_user (nama 45, username 45;
+            // username dibatasi 30 supaya sama dengan form Pengguna)
+            'name'             => 'required|string|max:45',
+            'username'         => 'required|string|max:30|unique:ms_user,username,' . $user->id_user . ',id_user',
             'password'         => 'nullable|string|min:6|confirmed',
             'current_password' => 'nullable|string',
         ], [
@@ -33,12 +34,13 @@ class ProfileController extends Controller
             $user->password = Hash::make($data['password']);
         }
 
-        $user->name = $data['name'];
+        // Input form tetap bernama "name", tapi kolom di database: nama
+        $user->nama = $data['name'];
         $user->username = $data['username'];
         $user->save();
 
         return response()->json([
-            'name'     => $user->name,
+            'name'     => $user->nama,
             'username' => $user->username,
         ]);
     }

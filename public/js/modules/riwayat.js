@@ -1,19 +1,14 @@
 /**
  * Adem Ayem - Riwayat Transaksi & Pembayaran Module
- * Mengelola filter transaksi, rincian pembayaran, pengurangan stok otomatis di backend,
- * pembatalan pesanan yang sudah dibayar, dan pencetakan struk transaksi.
+ * Filter transaksi, pembayaran (stok dikurangi otomatis di server),
+ * ubah pesanan yang belum dibayar, pembatalan pesanan yang sudah dibayar, dan struk.
  */
 
 let histOrders = [];
 let histFilter = 'semua';
+let cancelingOrder = null;
 
-// Gunakan variabel global payingOrder dan lastTrx yang sudah dideklarasikan di payment.js
-if (typeof payingOrder === 'undefined') {
-  window.payingOrder = null;
-}
-if (typeof lastTrx === 'undefined') {
-  window.lastTrx = null;
-}
+// payingOrder, selectedPay, dan lastTrx dideklarasikan di payment.js
 
 const PAY_FROM_ENUM = {
   cash: 'tunai',
@@ -28,14 +23,17 @@ const PAY_METHOD_NAMES = {
   tunai: 'Tunai'
 };
 
-const CANCEL_REASON_LABEL = {
-  customer_cancel:  'Pelanggan batal',
-  wrong_input:      'Salah input',
-  menu_unavailable: 'Menu habis',
-  other:            'Lainnya'
-};
+// Balasan server bisa bukan JSON (mis. halaman error), jadi jangan langsung dipercaya
+async function histJson(res) {
+  try { return await res.json(); } catch (_) { return {}; }
+}
 
-let cancelingOrder = null;
+function histErrorMessage(res, data, fallback) {
+  if (data && data.errors) return Object.values(data.errors).flat().join('\n');
+  if (data && data.message) return data.message;
+  if (res.status === 419) return 'Sesi habis. Muat ulang halaman lalu login kembali.';
+  return fallback + ' (kode ' + res.status + ')';
+}
 
 // Helper modal alert
 function triggerHistAlert(message, title = 'Perhatian') {
@@ -67,7 +65,6 @@ async function loadHistory() {
     body.innerHTML = '<tr><td colspan="8" class="empty">Memuat data transaksi...</td></tr>';
   }
 
-  // Gunakan data-list-url dengan fallback ke path relatif yang aman
   const url = page.dataset.listUrl || '/riwayat/data';
 
   try {
@@ -78,21 +75,16 @@ async function loadHistory() {
       }
     });
 
-    if (!res.ok) {
-      let errorMsg = `Gagal memuat data transaksi (Kode: ${res.status})`;
-      try {
-        const errJson = await res.json();
-        if (errJson && errJson.message) errorMsg = errJson.message;
-      } catch (_) {}
-      throw new Error(errorMsg);
-    }
-
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       throw new Error('Sesi telah berakhir atau server mengembalikan format tidak valid. Silakan muat ulang halaman.');
     }
 
     const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.message || 'Gagal memuat data transaksi (kode ' + res.status + ').');
+    }
+
     histOrders = Array.isArray(data) ? data : (data.data || []);
     renderHistory();
   } catch (e) {
@@ -148,26 +140,21 @@ function getFilteredHistory() {
   const to = document.getElementById('fTo')?.value || '';
 
   return histOrders.filter(o => {
-    // Filter status tab
     if (histFilter === 'belum' && o.status !== 'pending') return false;
     if (histFilter === 'sudah' && o.status !== 'completed') return false;
     if (histFilter === 'batal' && o.status !== 'cancelled') return false;
 
-    // Filter tipe layanan
     if (tipe && o.service_type !== tipe) return false;
 
-    // Filter metode pembayaran
     if (metode && (o.payment_method || '').toLowerCase() !== metode.toLowerCase()) {
       return false;
     }
 
-    // Filter pencarian invoice atau pelanggan
     if (q) {
       const hay = ((o.no || '') + ' ' + (o.customer || '')).toLowerCase();
       if (!hay.includes(q)) return false;
     }
 
-    // Filter rentang tanggal
     if (from || to) {
       const d = histLocalDate(o.date);
       if (from && d < from) return false;
@@ -213,14 +200,21 @@ function renderHistory() {
       ? `<span class="pay-method-badge">${PAY_METHOD_NAMES[o.payment_method] || escapeMenuHTML(o.payment_method)}</span>`
       : `<span style="color:var(--muted);">-</span>`;
 
+    // Teks pembatalan: "Alasan: catatan | Refund: ... | Stok: ..." (bagian pertama ditampilkan, sisanya di tooltip)
+    const cancelText = o.cancel_text || '';
+    const cancelShort = cancelText.split(' | ')[0] || '-';
+
     const actionBtn = isCancelled
-      ? `<span style="color:var(--muted);font-size:12px;" title="${escapeMenuHTML(o.cancel_note || '')}">${CANCEL_REASON_LABEL[o.cancel_reason] || '-'}</span>`
+      ? `<span style="color:var(--muted);font-size:12px;" title="${escapeMenuHTML(cancelText)}">${escapeMenuHTML(cancelShort)}</span>`
       : isCompleted
         ? `<div style="display:flex;gap:6px;justify-content:center;">
              <button class="btn btn-outline btn-compact" onclick="showOrderReceipt(${o.id})" title="Lihat struk pembayaran">Struk</button>
-             <button class="btn btn-compact" style="background:#fff5f5;border:1px solid #fca5a5;color:#dc2626;" onclick="openCancelOrder(${o.id})" title="Batalkan pesanan ini">Batalkan</button>
+             <button class="btn btn-compact" style="background:#fff5f5;border:1px solid #fca5a5;color:#dc2626;" onclick="openCancelOrder(${o.id})" title="Batalkan pesanan yang tidak jadi">Batalkan</button>
            </div>`
-        : `<button class="btn btn-primary btn-compact" onclick="openPayOrder(${o.id})" title="Proses pembayaran pesanan ini">Bayar</button>`;
+        : `<div style="display:flex;gap:6px;justify-content:center;">
+             <button class="btn btn-primary btn-compact" onclick="openPayOrder(${o.id})" title="Proses pembayaran pesanan ini">Bayar</button>
+             <button class="btn btn-outline btn-compact" onclick="openEditOrder(${o.id})" title="Ubah isi pesanan">Edit</button>
+           </div>`;
 
     const dateFormatted = new Date(o.date).toLocaleDateString('id-ID', {
       day: 'numeric',
@@ -245,6 +239,7 @@ function renderHistory() {
   }).join('');
 }
 
+// Data riwayat -> bentuk yang dipakai struk
 function histToTrx(o) {
   return {
     id: o.id,
@@ -258,10 +253,9 @@ function histToTrx(o) {
     payment: PAY_FROM_ENUM[o.payment_method] || o.payment_method || 'tunai',
     received: o.received ?? o.total,
     change: o.change ?? 0,
-    kasir: (typeof currentUser === 'function' && currentUser()) ? currentUser().name : (typeof SERVER_USER !== 'undefined' ? SERVER_USER.name : 'Kasir'),
+    kasir: (o.user && o.user.name) || '-',
     customer: o.customer || 'Umum',
-    orderType: o.service_type || 'dine-in',
-    receiptUrl: o.receipt_url || ''
+    orderType: o.service_type || 'dine-in'
   };
 }
 
@@ -276,7 +270,6 @@ function openPayOrder(id) {
   payingOrder = histOrders.find(o => o.id === id);
   if (!payingOrder) return;
 
-  // Isi data tagihan di kartu rincian modal
   const invEl = document.getElementById('payBillInvoice');
   if (invEl) invEl.textContent = payingOrder.no;
 
@@ -315,7 +308,7 @@ function openPayOrder(id) {
 async function confirmPayOrder() {
   if (!payingOrder) return;
   const total = payingOrder.total;
-  let received = null;
+  let received = total;
   let change = 0;
 
   if (selectedPay === 'tunai') {
@@ -346,34 +339,27 @@ async function confirmPayOrder() {
       },
       body: JSON.stringify({
         payment_method: PAY_ENUM[selectedPay] || 'cash',
-        received: selectedPay === 'tunai' ? received : total
+        received: received
       })
     });
 
-    const data = await res.json();
+    const data = await histJson(res);
     if (!res.ok) {
-      const errorMsg = data.errors ? Object.values(data.errors)[0][0] : (data.message || 'Gagal memproses pembayaran.');
-      triggerHistAlert(errorMsg, 'Gagal');
+      triggerHistAlert(histErrorMessage(res, data, 'Gagal memproses pembayaran'), 'Gagal');
       return;
     }
 
     lastTrx = {
       ...histToTrx(payingOrder),
       payment: selectedPay,
-      received: selectedPay === 'tunai' ? received : total,
+      received: received,
       change: change
     };
 
     closePaymentModal();
     openReceiptModal(lastTrx);
 
-    // Muat ulang data riwayat
     await loadHistory();
-
-    // Jika sedang membuka kasir di tab lain / ada function refreshStockEstimates, panggil
-    if (typeof refreshStockEstimates === 'function') {
-      refreshStockEstimates();
-    }
 
   } catch (e) {
     console.error(e);
@@ -383,6 +369,217 @@ async function confirmPayOrder() {
       btn.disabled = false;
       btn.textContent = 'Konfirmasi & Cetak Struk';
     }
+  }
+}
+
+// ─── Ubah pesanan yang belum dibayar ─────────────────────────────────────────
+let editingOrder = null;
+let editLines = [];        // [{ menu_id, name, price, qty }]
+let editType = 'dine-in';
+let editMenus = [];        // daftar menu tersedia dari server
+
+async function loadEditMenus() {
+  if (editMenus.length) return;
+
+  const page = document.getElementById('riwayatPage');
+  const url = page?.dataset.menuUrl || '/kasir/menu-data';
+
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const data = await histJson(res);
+    editMenus = Array.isArray(data)
+      ? data.map(m => ({ id: Number(m.id), name: m.name, price: Number(m.price) }))
+      : [];
+  } catch (e) {
+    editMenus = [];
+  }
+}
+
+function fillEditMenuSelect() {
+  const sel = document.getElementById('editAddMenu');
+  if (!sel) return;
+
+  sel.innerHTML = '<option value="">-- Pilih menu --</option>' + editMenus.map(m =>
+    `<option value="${m.id}">${escapeMenuHTML(m.name)} (${rupiah(m.price)})</option>`
+  ).join('');
+}
+
+async function openEditOrder(id) {
+  const o = histOrders.find(x => x.id === id);
+  if (!o || o.status !== 'pending') return;
+
+  editingOrder = o;
+  editType = o.service_type || 'dine-in';
+  editLines = (o.items || []).map(i => ({
+    menu_id: Number(i.menu_id),
+    name: i.name,
+    price: Number(i.price),
+    qty: Number(i.qty)
+  }));
+
+  document.getElementById('editOrderInfo').textContent = `${o.no} · belum dibayar`;
+  document.getElementById('editCust').value = (o.customer && o.customer !== 'Umum') ? o.customer : '';
+  document.getElementById('editDiscount').value = o.discount > 0 ? o.discount : '';
+  document.getElementById('editOrderError').textContent = '';
+  document.getElementById('editOrderModal').style.display = 'flex';
+
+  await loadEditMenus();
+  fillEditMenuSelect();
+
+  // Harga mengikuti daftar menu terbaru (server juga memakai harga terbaru)
+  editLines.forEach(l => {
+    const m = editMenus.find(x => x.id === l.menu_id);
+    if (m) l.price = m.price;
+  });
+
+  renderEditOrder();
+}
+
+function closeEditOrder() {
+  const modal = document.getElementById('editOrderModal');
+  if (modal) modal.style.display = 'none';
+  editingOrder = null;
+  editLines = [];
+}
+
+function setEditType(t) {
+  editType = t;
+  renderEditOrder();
+}
+
+function renderEditOrder() {
+  document.querySelectorAll('#editTypeToggle button')
+    .forEach(b => b.classList.toggle('sel', b.dataset.t === editType));
+
+  const list = document.getElementById('editItems');
+  if (list) {
+    list.innerHTML = editLines.length
+      ? editLines.map(l => `
+          <div class="cart-item">
+            <div>
+              ${escapeMenuHTML(l.name)}<br>
+              <span style="color:var(--muted);font-size:12px">${rupiah(l.price)} x ${l.qty} = ${rupiah(l.price * l.qty)}</span>
+            </div>
+            <div class="qty-ctrl">
+              <button type="button" onclick="editChangeQty(${l.menu_id},-1)" title="Kurangi">−</button>
+              <span style="margin:0 6px;min-width:20px;text-align:center;font-weight:600;">${l.qty}</span>
+              <button type="button" onclick="editChangeQty(${l.menu_id},1)" title="Tambah">+</button>
+              <button type="button" onclick="editRemoveLine(${l.menu_id})" style="margin-left:6px;color:var(--danger);border:none;background:none;cursor:pointer" title="Hapus item">✕</button>
+            </div>
+          </div>
+        `).join('')
+      : '<div class="empty">Belum ada item. Tambahkan menu di bawah.</div>';
+  }
+
+  renderEditTotals();
+}
+
+function editSubtotal() {
+  return editLines.reduce((s, l) => s + l.price * l.qty, 0);
+}
+
+function editDiscountValue() {
+  const sub = editSubtotal();
+  const v = Number(document.getElementById('editDiscount')?.value) || 0;
+  return Math.min(Math.max(v, 0), sub);
+}
+
+function renderEditTotals() {
+  const sub = editSubtotal();
+  const disc = editDiscountValue();
+
+  const subEl = document.getElementById('editSubtotal');
+  if (subEl) subEl.textContent = rupiah(sub);
+
+  const totalEl = document.getElementById('editTotal');
+  if (totalEl) totalEl.textContent = rupiah(sub - disc);
+}
+
+function editChangeQty(menuId, delta) {
+  const line = editLines.find(l => l.menu_id === menuId);
+  if (!line) return;
+
+  line.qty = Math.min(99, line.qty + delta);
+  if (line.qty <= 0) editLines = editLines.filter(l => l.menu_id !== menuId);
+
+  renderEditOrder();
+}
+
+function editRemoveLine(menuId) {
+  editLines = editLines.filter(l => l.menu_id !== menuId);
+  renderEditOrder();
+}
+
+function addEditLine() {
+  const sel = document.getElementById('editAddMenu');
+  const menuId = Number(sel?.value);
+  if (!menuId) return;
+
+  const menu = editMenus.find(m => m.id === menuId);
+  if (!menu) return;
+
+  const line = editLines.find(l => l.menu_id === menuId);
+  if (line) {
+    line.qty = Math.min(99, line.qty + 1);
+  } else {
+    editLines.push({ menu_id: menu.id, name: menu.name, price: menu.price, qty: 1 });
+  }
+
+  sel.value = '';
+  document.getElementById('editOrderError').textContent = '';
+  renderEditOrder();
+}
+
+async function saveEditOrder() {
+  if (!editingOrder) return;
+
+  const errEl = document.getElementById('editOrderError');
+  const btn = document.getElementById('editSaveBtn');
+  errEl.textContent = '';
+
+  if (!editLines.length) {
+    errEl.textContent = 'Pesanan harus memiliki minimal 1 menu.';
+    return;
+  }
+
+  const custName = document.getElementById('editCust').value.trim();
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+
+  try {
+    const page = document.getElementById('riwayatPage');
+    const base = page?.dataset.payUrl || '/riwayat';
+    const res = await fetch(base + '/' + editingOrder.id, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRF-TOKEN': CSRF_TOKEN,
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        customer_name: custName || null,
+        service_type: editType,
+        discount: editDiscountValue(),
+        items: editLines.map(l => ({ menu_id: l.menu_id, qty: l.qty }))
+      })
+    });
+
+    const data = await histJson(res);
+    if (!res.ok) {
+      errEl.textContent = histErrorMessage(res, data, 'Gagal mengubah pesanan');
+      return;
+    }
+
+    closeEditOrder();
+    await loadHistory();
+    triggerHistAlert(data.message || 'Pesanan berhasil diubah.', 'Berhasil');
+  } catch (e) {
+    errEl.textContent = 'Terjadi kesalahan jaringan: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan Perubahan';
   }
 }
 
@@ -443,21 +640,15 @@ async function confirmCancelOrder() {
       })
     });
 
-    const data = await res.json();
+    const data = await histJson(res);
     if (!res.ok) {
-      errEl.textContent = data.errors
-        ? Object.values(data.errors).flat().join('\n')
-        : (data.message || 'Gagal membatalkan pesanan.');
+      errEl.textContent = histErrorMessage(res, data, 'Gagal membatalkan pesanan');
       return;
     }
 
     closeCancelOrder();
     await loadHistory();
     triggerHistAlert(data.message || 'Pesanan berhasil dibatalkan.', 'Berhasil');
-
-    if (typeof refreshStockEstimates === 'function') {
-      refreshStockEstimates();
-    }
   } catch (e) {
     errEl.textContent = 'Terjadi kesalahan jaringan: ' + e.message;
   } finally {
@@ -465,7 +656,7 @@ async function confirmCancelOrder() {
   }
 }
 
-// Ekspor ke window agar dapat dipanggil dari app.js / core.js
+// Ekspor ke window agar dapat dipanggil dari atribut onclick di HTML
 window.loadHistory = loadHistory;
 window.renderHistory = renderHistory;
 window.setHistFilter = setHistFilter;
@@ -474,53 +665,14 @@ window.onDateFilterChange = onDateFilterChange;
 window.openPayOrder = openPayOrder;
 window.confirmPayOrder = confirmPayOrder;
 window.showOrderReceipt = showOrderReceipt;
+window.openEditOrder = openEditOrder;
+window.closeEditOrder = closeEditOrder;
+window.setEditType = setEditType;
+window.renderEditTotals = renderEditTotals;
+window.editChangeQty = editChangeQty;
+window.editRemoveLine = editRemoveLine;
+window.addEditLine = addEditLine;
+window.saveEditOrder = saveEditOrder;
 window.openCancelOrder = openCancelOrder;
 window.closeCancelOrder = closeCancelOrder;
 window.confirmCancelOrder = confirmCancelOrder;
-
-// Cetak struk lewat iframe tersembunyi (hanya struk + QR yang tercetak)
-document.addEventListener('DOMContentLoaded', function () {
-  window.printLastReceipt = function () {
-    const struk = document.getElementById('receiptModalBody');
-    const qr = document.getElementById('fakeQr');
-    if (!struk) return;
-
-    const lama = document.getElementById('printFrame');
-    if (lama) lama.remove();
-
-    const f = document.createElement('iframe');
-    f.id = 'printFrame';
-    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-    document.body.appendChild(f);
-
-    const doc = f.contentWindow.document;
-    doc.open();
-    doc.write(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Struk Pembayaran</title>
-<style>
-  @page { size: 80mm auto; margin: 0; }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:4mm; width:80mm; font-family:'Courier New',monospace; font-size:12px; color:#000; }
-  .rline { display:flex; justify-content:space-between; padding:1px 0; }
-  hr { border:none; border-top:1px dashed #000; margin:6px 0; }
-  .center { text-align:center; }
-  .qr { text-align:center; margin-top:10px; }
-  .qr img, .qr svg, .qr canvas { width:36mm; height:auto; }
-</style>
-</head>
-<body>
-  ${struk.innerHTML}
-  <div class="qr">${qr ? qr.innerHTML : ''}</div>
-</body>
-</html>`);
-    doc.close();
-
-    setTimeout(function () {
-      f.contentWindow.focus();
-      f.contentWindow.print();
-    }, 300);
-  };
-});

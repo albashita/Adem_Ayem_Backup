@@ -45,7 +45,7 @@ $role = fn (string ...$roles) => function (
 
     $home = match ($user->role) {
         'kasir' => 'kasir.index',
-        'owner', 'admin' => 'dashboard',
+        'superadmin', 'admin' => 'dashboard',
         default => null,
     };
 
@@ -110,13 +110,13 @@ Route::post('/logout', [AuthController::class, 'logout'])
 */
 Route::middleware('auth')->group(function () use ($role) {
 
-    // Owner dan Admin
-    Route::group(['middleware' => [$role('owner', 'admin')]], function () {
+    // Superadmin (owner) dan Admin
+    Route::group(['middleware' => [$role('superadmin', 'admin')]], function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     });
 
-    // Owner saja
-    Route::group(['middleware' => [$role('owner')]], function () {
+    // Superadmin (owner) saja
+    Route::group(['middleware' => [$role('superadmin')]], function () {
 
         // Pengelolaan Pengguna
         Route::get('/pengguna', [UserController::class, 'index'])
@@ -195,6 +195,8 @@ Route::middleware('auth')->group(function () use ($role) {
 
         Route::post('/kasir/orders', [OrderController::class, 'store'])
             ->name('kasir.orders.store');
+        
+        
 
         // Riwayat Transaksi
         Route::get('/riwayat', fn () => view('riwayat.index', ['pageKey' => 'riwayat']))
@@ -204,7 +206,10 @@ Route::middleware('auth')->group(function () use ($role) {
         Route::post('/riwayat/{id}/pay', [OrderController::class, 'pay'])
             ->name('riwayat.pay');
         Route::post('/riwayat/{id}/cancel', [OrderController::class, 'cancel'])
-    ->name('riwayat.cancel');
+            ->name('riwayat.cancel');
+
+        Route::put('/riwayat/{id}', [OrderController::class, 'update'])
+    ->name('riwayat.update');
     });
 
     // Semua role yang sudah login

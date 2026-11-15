@@ -1,42 +1,49 @@
 /**
  * Adem Ayem - Menu Management Module
- * Pengelolaan katalog menu (CRUD menu, upload gambar, emoji picker, kode menu).
+ * CRUD menu (tabel ms_menu), unggah foto, dan pengaturan resep (ms_resep).
+ * Semua data diambil dari server, tidak memakai localStorage.
  */
 
-const EMOJIS = ['🍚', '🍜', '🍗', '🍔', '🍟', '🥗', '🍕', '🥤', '☕', '🧋', '🍵', '🧃'];
-let menuEmoji = '🍽️';
 let editingMenuId = null;
 let dbMenus = [];
 
-// Kode menu otomatis dari kategori (mis. NAS-01, MIN-02)
-function genMenuCode(category, menu) {
-  const pre = (category || 'MNU').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
-  let n = 1, code;
-  do {
-    code = pre + '-' + String(n).padStart(2, '0');
-    n++;
-  } while (menu.some(p => p.code === code));
-  return code;
-}
+// Kategori (nilai enum ms_menu.kategori) yang punya tombol "Atur Resep".
+// Mau resep juga untuk minuman/camilan? Tambahkan di sini: ['makanan', 'minuman']
+const RECIPE_CATEGORIES = ['makanan'];
 
-function ensureMenuCodes() {
-  const menu = getMenu();
-  let changed = false;
-  menu.forEach(p => {
-    if (!p.code) {
-      p.code = genMenuCode(p.category, menu);
-      changed = true;
-    }
-  });
-  if (changed) setMenu(menu);
+/* ------------------------------------------------------------ HELPER */
+
+function csrfToken() {
+  return document.querySelector('meta[name="csrf-token"]')?.content
+    || (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '');
 }
 
 function menuHeaders() {
   return {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
-    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+    'X-CSRF-TOKEN': csrfToken()
   };
+}
+
+// Balasan server bisa bukan JSON (mis. halaman error), jadi jangan langsung dipercaya
+async function readJson(response) {
+  try { return await response.json(); } catch (e) { return {}; }
+}
+
+function errorMessage(result, fallback) {
+  if (result && result.errors) return Object.values(result.errors).flat().join('\n');
+  return (result && result.message) || fallback;
+}
+
+function showMenuMessage(type, text) {
+  const el = document.getElementById('menuMessage');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = type === 'error' ? '#dc2626' : '#166534';
+  el.style.fontWeight = '600';
+  clearTimeout(showMenuMessage.timer);
+  showMenuMessage.timer = setTimeout(() => { el.textContent = ''; }, 6000);
 }
 
 function menuUrl(action, id = null) {
@@ -56,22 +63,23 @@ function menuUrl(action, id = null) {
   return `${base}/${id}`;
 }
 
-function buildEmojiPick() {
-  const picker = document.getElementById('emojiPick');
-  if (!picker) return;
+/* ------------------------------------------------------- MODAL MENU */
 
-  picker.innerHTML = EMOJIS.map(emoji => `
-    <span
-      class="${emoji === menuEmoji ? 'sel' : ''}"
-      style="cursor:pointer"
-      onclick="pickEmoji('${emoji}')"
-    >${emoji}</span>
-  `).join('');
-}
+function previewMenuImage(input, existingUrl = null) {
+  const img = document.getElementById('mImagePreview');
+  if (!img) return;
 
-function pickEmoji(emoji) {
-  menuEmoji = emoji;
-  buildEmojiPick();
+  const file = input && input.files ? input.files[0] : null;
+  if (file) {
+    img.src = URL.createObjectURL(file);
+    img.style.display = 'block';
+  } else if (existingUrl) {
+    img.src = existingUrl;
+    img.style.display = 'block';
+  } else {
+    img.removeAttribute('src');
+    img.style.display = 'none';
+  }
 }
 
 function openMenuModal(id = null) {
@@ -81,82 +89,130 @@ function openMenuModal(id = null) {
     return;
   }
 
-  editingMenuId = id;
-  menuEmoji = '🍽️';
-  form.reset();
+  const isEdit = Boolean(id);
+  const menu = isEdit ? dbMenus.find(item => Number(item.id_menu) === Number(id)) : null;
 
-  document.getElementById('menuModalTitle').textContent = id ? 'Ubah Menu' : 'Tambah Menu';
-  document.getElementById('mSaveBtn').textContent = id ? 'Update' : 'Simpan';
-  document.getElementById('mCode').value = '';
-
-  buildEmojiPick();
-  document.getElementById('menuModal').style.display = 'flex';
-
-  if (id) {
-    const menu = dbMenus.find(item => Number(item.id_menu) === Number(id));
-    if (!menu) {
-      alert('Data menu tidak ditemukan.');
-      closeMenuModal();
-      return;
-    }
-
-    document.getElementById('mCode').value = menu.kode_menu || menu.code || ('MENU-' + String(menu.id_menu).padStart(3, '0'));
-    document.getElementById('mName').value = menu.name || '';
-    document.getElementById('mCat').value = String(menu.categories_id_categorie ?? '');
-    document.getElementById('mPrice').value = menu.price ?? '';
-
-    const description = document.getElementById('mDescription');
-    if (description) {
-      description.value = menu.description || '';
-    }
-
-    menuEmoji = menu.image || '🍽️';
-    buildEmojiPick();
+  if (isEdit && !menu) {
+    alert('Data menu tidak ditemukan.');
+    return;
   }
+
+  editingMenuId = isEdit ? id : null;
+  form.reset();
+  previewMenuImage(null, menu ? menu.image_url : null);
+
+  document.getElementById('menuModalTitle').textContent = isEdit ? 'Ubah Menu' : 'Tambah Menu';
+  document.getElementById('mSaveBtn').textContent = isEdit ? 'Update' : 'Simpan';
+  document.getElementById('mStatusField').style.display = isEdit ? '' : 'none';
+  document.getElementById('mPackaging').value = 0;
+
+  if (menu) {
+    document.getElementById('mCode').value = menu.kode_menu || '';
+    document.getElementById('mName').value = menu.name || '';
+    document.getElementById('mCat').value = menu.kategori || '';
+    document.getElementById('mPrice').value = menu.price ?? '';
+    document.getElementById('mPackaging').value = menu.biaya_kemasan ?? 0;
+    document.getElementById('mDescription').value = menu.description || '';
+    document.getElementById('mStatus').value = menu.status || 'tersedia';
+  }
+
+  document.getElementById('menuModal').style.display = 'flex';
+  document.getElementById('mName').focus();
 }
 
 function closeMenuModal() {
   const modal = document.getElementById('menuModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
+  if (modal) modal.style.display = 'none';
   editingMenuId = null;
 }
 
-// ID kategori Makanan sesuai database (id_categorie = 1)
-const CATEGORY_ID_MAKANAN = 1;
+async function saveMenu(event) {
+  if (event) event.preventDefault();
 
-function populateCategoryFilterOptions() {
-  const select = document.getElementById('filterCategory');
-  if (!select) return;
+  const code = document.getElementById('mCode').value.trim();
+  const name = document.getElementById('mName').value.trim();
+  const category = document.getElementById('mCat').value;
+  const price = Number(document.getElementById('mPrice').value);
+  const packaging = Number(document.getElementById('mPackaging').value || 0);
+  const description = document.getElementById('mDescription').value.trim();
+  const status = document.getElementById('mStatus').value;
 
-  // Pertahankan opsi kategori jika sudah tersedia dari render Blade
-  if (select.options.length > 1) return;
+  const imageFile = document.getElementById('mImage')?.files?.[0] || null;
+  const isEditing = Boolean(editingMenuId);
 
-  // Fallback sinkronisasi kategori dinamis dari dbMenus
-  const categoriesMap = new Map();
-  dbMenus.forEach(menu => {
-    const catId = menu.categories_id_categorie ?? menu.category?.id_categorie;
-    const catName = menu.category?.name || `Kategori ${catId}`;
-    if (catId) {
-      categoriesMap.set(Number(catId), catName);
-    }
-  });
+  if (!name || !category || !Number.isInteger(price) || price < 1) {
+    alert('Nama menu, kategori, dan harga wajib diisi dengan benar.');
+    return;
+  }
 
-  if (categoriesMap.size > 0) {
-    const currentVal = select.value;
-    select.innerHTML = '<option value="">Semua Kategori</option>';
-    categoriesMap.forEach((name, id) => {
-      const opt = document.createElement('option');
-      opt.value = String(id);
-      opt.textContent = name;
-      if (String(id) === String(currentVal)) {
-        opt.selected = true;
+  if (!Number.isInteger(packaging) || packaging < 0) {
+    alert('Biaya kemasan harus berupa angka 0 atau lebih.');
+    return;
+  }
+
+  if (code.length > 10) {
+    alert('Kode menu maksimal 10 karakter.');
+    return;
+  }
+
+  if (imageFile && !['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type)) {
+    alert('Foto harus berformat JPG, PNG, atau WEBP.');
+    return;
+  }
+
+  if (imageFile && imageFile.size > 2 * 1024 * 1024) {
+    alert('Ukuran foto maksimal 2 MB.');
+    return;
+  }
+
+  const button = document.getElementById('mSaveBtn');
+  button.disabled = true;
+
+  const formData = new FormData();
+  // Kode kosong = server membuat kode otomatis (menu baru) atau tetap memakai kode lama (ubah)
+  if (code) formData.append('kode_menu', code);
+  formData.append('name', name);
+  formData.append('description', description);
+  formData.append('price', String(price));
+  formData.append('biaya_kemasan', String(packaging));
+  formData.append('categories_id_categorie', category);
+
+  if (imageFile) formData.append('image', imageFile);
+
+  if (isEditing) {
+    formData.append('status', status);
+    formData.append('_method', 'PUT');
+  }
+
+  try {
+    const response = await fetch(
+      isEditing ? menuUrl('update', editingMenuId) : menuUrl('store'),
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': csrfToken()
+        },
+        body: formData
       }
-      select.appendChild(opt);
-    });
+    );
+
+    const result = await readJson(response);
+    if (!response.ok) {
+      throw new Error(errorMessage(result, 'Gagal menyimpan menu (kode ' + response.status + ').'));
+    }
+
+    closeMenuModal();
+    showMenuMessage('success', result.message || 'Menu berhasil disimpan.');
+    await renderMenuAdmin();
+  } catch (error) {
+    alert(error.message || 'Terjadi kesalahan saat menyimpan menu.');
+  } finally {
+    button.disabled = false;
   }
 }
+
+/* ------------------------------------------------------ DAFTAR MENU */
 
 function filterMenuByCategory() {
   renderFilteredMenu();
@@ -166,90 +222,51 @@ function renderFilteredMenu() {
   const body = document.getElementById('menuBody');
   if (!body) return;
 
-  const isOwner = (typeof SERVER_USER !== 'undefined') && (
-    SERVER_USER.db_role === 'owner' ||
-    SERVER_USER.role === 'superadmin' ||
-    SERVER_USER.role === 'owner'
-  );
+  const isOwner = (typeof SERVER_USER !== 'undefined') && SERVER_USER.role === 'superadmin';
 
-  const filterSelect = document.getElementById('filterCategory');
-  const selectedCat = filterSelect ? filterSelect.value.trim() : '';
+  const selectedCat = (document.getElementById('filterCategory')?.value || '').trim();
+  const filtered = dbMenus.filter(menu => !selectedCat || menu.kategori === selectedCat);
 
-  const searchInput = document.getElementById('menuSearch') || document.getElementById('searchMenu');
-  const keyword = searchInput ? searchInput.value.trim().toLowerCase() : '';
-
-  // 3 & 4 & 5. Filter berdasarkan id_categorie dan pencarian jika tersedia
-  const filtered = dbMenus.filter(menu => {
-    // Gunakan id_categorie sebagai dasar pencocokan filter, bukan nama kategori
-    const menuCatId = menu.categories_id_categorie ?? menu.category?.id_categorie;
-    const matchesCategory = !selectedCat || String(menuCatId) === String(selectedCat);
-
-    const matchesSearch = !keyword || (
-      (menu.name && menu.name.toLowerCase().includes(keyword)) ||
-      (menu.kode_menu && menu.kode_menu.toLowerCase().includes(keyword)) ||
-      (menu.code && menu.code.toLowerCase().includes(keyword)) ||
-      (menu.category?.name && menu.category.name.toLowerCase().includes(keyword))
-    );
-
-    return matchesCategory && matchesSearch;
-  });
-
-  // 7. Jika hasil filter kosong, tampilkan pesan bahwa tidak ada menu pada kategori tersebut
   if (!filtered.length) {
-    const emptyMessage = selectedCat
-      ? 'Tidak ada menu pada kategori tersebut.'
-      : 'Belum ada menu.';
+    const emptyMessage = selectedCat ? 'Tidak ada menu pada kategori tersebut.' : 'Belum ada menu.';
     body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#64748b;">${emptyMessage}</td></tr>`;
     return;
   }
 
   body.innerHTML = filtered.map(menu => {
-    const imageUrl = menu.image_url || null;
-    const imageHTML = imageUrl
+    const imageHTML = menu.image_url
       ? `<img
-          src="${escapeMenuHTML(imageUrl)}"
+          src="${escapeMenuHTML(menu.image_url)}"
           alt="${escapeMenuHTML(menu.name)}"
           onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block';"
         >
         <span style="display:none;font-size:22px;">🍽️</span>`
       : '<span style="font-size:22px;">🍽️</span>';
 
-    // Tombol Atur Resep hanya untuk kategori Makanan (id_categorie = 1)
-    const menuCatId = Number(menu.categories_id_categorie ?? menu.category?.id_categorie);
-    const isMakanan = menuCatId === CATEGORY_ID_MAKANAN;
+    const canSetRecipe = isOwner && RECIPE_CATEGORIES.includes(menu.kategori);
+    const kode = menu.kode_menu || menu.code || ('MENU-' + String(menu.id_menu).padStart(3, '0'));
+    const nonaktif = menu.status === 'kosong'
+      ? '<span class="tag tag-nonaktif">Nonaktif</span>'
+      : '';
 
     return `
       <tr>
         <td class="col-foto">${imageHTML}</td>
-        <td class="col-kode" style="font-family: inherit; font-size: 13.5px; font-weight: 500; letter-spacing: normal;">
-          ${escapeMenuHTML(menu.kode_menu || menu.code || ('MENU-' + String(menu.id_menu).padStart(3, '0')))}
-        </td>
-        <td class="col-nama">${escapeMenuHTML(menu.name)}</td>
+        <td class="col-kode">${escapeMenuHTML(kode)}</td>
+        <td class="col-nama">${escapeMenuHTML(menu.name)}${nonaktif}</td>
         <td class="col-kategori">
-          <span class="tag tag-menu">
-            ${escapeMenuHTML(menu.category?.name || '-')}
-          </span>
+          <span class="tag tag-menu">${escapeMenuHTML(menu.category?.name || '-')}</span>
         </td>
         <td class="col-harga">${rupiah(menu.price)}</td>
         <td class="col-aksi">
           <div class="row-actions">
-            ${(isOwner && isMakanan) ? `
-              <button
-                type="button"
-                class="btn-recipe"
-                onclick="openRecipeModal(${Number(menu.id_menu)})"
-                title="Atur resep bahan baku untuk menu ini"
-              >Atur Resep</button>
+            ${canSetRecipe ? `
+              <button type="button" class="btn-recipe"
+                      onclick="openRecipeModal(${Number(menu.id_menu)})"
+                      title="Atur resep bahan baku untuk menu ini">Atur Resep</button>
             ` : ''}
-            <button
-              type="button"
-              onclick="openMenuModal(${Number(menu.id_menu)})"
-            >Ubah</button>
-            <button
-              type="button"
-              class="del"
-              onclick="deleteMenu(${Number(menu.id_menu)})"
-            >Hapus</button>
+            <button type="button" onclick="openMenuModal(${Number(menu.id_menu)})">Ubah</button>
+            <button type="button" class="del" onclick="deleteMenu(${Number(menu.id_menu)})">Hapus</button>
           </div>
         </td>
       </tr>
@@ -268,13 +285,12 @@ async function renderMenuAdmin() {
       headers: { 'Accept': 'application/json' }
     });
 
-    const result = await response.json();
+    const result = await readJson(response);
     if (!response.ok) {
-      throw new Error(result.message || 'Gagal memuat menu.');
+      throw new Error(errorMessage(result, 'Gagal memuat menu (kode ' + response.status + ').'));
     }
 
     dbMenus = Array.isArray(result) ? result : (result.menus || []);
-    populateCategoryFilterOptions();
     renderFilteredMenu();
   } catch (error) {
     body.innerHTML = `
@@ -287,98 +303,7 @@ async function renderMenuAdmin() {
   }
 }
 
-// Global binding untuk inline handler HTML
-window.filterMenuByCategory = filterMenuByCategory;
-window.renderFilteredMenu = renderFilteredMenu;
-window.renderMenuAdmin = renderMenuAdmin;
-
-async function saveMenu(event) {
-  if (event) event.preventDefault();
-
-  const code = document.getElementById('mCode').value.trim();
-  const name = document.getElementById('mName').value.trim();
-  const categoryId = document.getElementById('mCat').value;
-  const price = Number(document.getElementById('mPrice').value);
-  const description = document.getElementById('mDescription')?.value.trim() || '';
-
-  const imageInput = document.getElementById('mImage');
-  const imageFile = imageInput?.files?.[0] || null;
-
-  if (!code) {
-    alert('Kode menu wajib diisi.');
-    document.getElementById('mCode').focus();
-    return;
-  }
-
-  if (!name || !categoryId || !Number.isInteger(price) || price < 1) {
-    alert('Nama menu, kategori, dan harga wajib diisi dengan benar.');
-    return;
-  }
-
-  if (imageFile && !['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type)) {
-    alert('Foto harus berformat JPG, PNG, atau WEBP.');
-    return;
-  }
-
-  if (imageFile && imageFile.size > 2 * 1024 * 1024) {
-    alert('Ukuran foto maksimal 2 MB.');
-    return;
-  }
-
-  const button = document.getElementById('mSaveBtn');
-  button.disabled = true;
-
-  const formData = new FormData();
-  formData.append('kode_menu', code);
-  formData.append('name', name);
-  formData.append('description', description);
-  formData.append('price', String(price));
-  formData.append('categories_id_categorie', String(categoryId));
-
-  if (imageFile) {
-    formData.append('image', imageFile);
-  }
-
-  const isEditing = Boolean(editingMenuId);
-  if (isEditing) {
-    formData.append('_method', 'PUT');
-  }
-
-  try {
-    const response = await fetch(
-      isEditing ? menuUrl('update', editingMenuId) : menuUrl('store'),
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-        },
-        body: formData
-      }
-    );
-
-    const result = await response.json();
-    if (!response.ok) {
-      const message = result.errors
-        ? Object.values(result.errors).flat().join('\n')
-        : (result.message || 'Gagal menyimpan menu.');
-      throw new Error(message);
-    }
-
-    closeMenuModal();
-
-    const message = document.getElementById('menuMessage');
-    if (message) {
-      message.textContent = result.message || 'Menu berhasil disimpan.';
-    }
-
-    await renderMenuAdmin();
-  } catch (error) {
-    alert(error.message || 'Terjadi kesalahan saat menyimpan menu.');
-  } finally {
-    button.disabled = false;
-  }
-}
+/* ------------------------------------------------------- HAPUS MENU */
 
 async function deleteMenu(id) {
   const menu = dbMenus.find(item => Number(item.id_menu) === Number(id));
@@ -407,18 +332,13 @@ async function deleteMenu(id) {
         headers: menuHeaders()
       });
 
-      const result = await response.json();
+      const result = await readJson(response);
       if (!response.ok) {
-        throw new Error(result.message || 'Gagal menghapus menu.');
+        throw new Error(errorMessage(result, 'Gagal menghapus menu (kode ' + response.status + ').'));
       }
 
       modal.style.display = 'none';
-
-      const message = document.getElementById('menuMessage');
-      if (message) {
-        message.textContent = result.message || 'Menu berhasil dihapus.';
-      }
-
+      showMenuMessage('success', result.message || 'Menu berhasil dihapus.');
       await renderMenuAdmin();
     } catch (error) {
       alert(error.message || 'Terjadi kesalahan saat menghapus menu.');
@@ -430,9 +350,7 @@ async function deleteMenu(id) {
 
 function closeDeleteMenuModal() {
   const modal = document.getElementById('deleteMenuModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
+  if (modal) modal.style.display = 'none';
 }
 
 /*
@@ -461,21 +379,15 @@ function isRecipeChanged() {
   const current = getRecipeSnapshot(recipeIngredients);
   if (current.length !== initialRecipeSnapshot.length) return true;
   for (let i = 0; i < current.length; i++) {
-    if (current[i].id_stock_item !== initialRecipeSnapshot[i].id_stock_item) {
-      return true;
-    }
-    if (Math.abs(current[i].quantity_required - initialRecipeSnapshot[i].quantity_required) > 0.0001) {
-      return true;
-    }
+    if (current[i].id_stock_item !== initialRecipeSnapshot[i].id_stock_item) return true;
+    if (Math.abs(current[i].quantity_required - initialRecipeSnapshot[i].quantity_required) > 0.0001) return true;
   }
   return false;
 }
 
 function updateSaveRecipeButtonState() {
   const saveBtn = document.getElementById('btnSaveRecipe');
-  if (!saveBtn) return;
-  const changed = isRecipeChanged();
-  saveBtn.disabled = !changed;
+  if (saveBtn) saveBtn.disabled = !isRecipeChanged();
 }
 
 function showRecipeAlert(type, message) {
@@ -542,13 +454,11 @@ async function openRecipeModal(menuId) {
   }
 
   try {
-    const response = await fetch(menuUrl('recipe', menuId), {
-      headers: menuHeaders()
-    });
+    const response = await fetch(menuUrl('recipe', menuId), { headers: menuHeaders() });
 
-    const result = await response.json();
+    const result = await readJson(response);
     if (!response.ok) {
-      throw new Error(result.message || 'Gagal memuat data resep.');
+      throw new Error(errorMessage(result, 'Gagal memuat data resep (kode ' + response.status + ').'));
     }
 
     currentRecipeMenu = result.menu || {};
@@ -569,6 +479,10 @@ async function openRecipeModal(menuId) {
     populateRecipeStockSelect();
     renderRecipeTable();
     updateSaveRecipeButtonState();
+
+    if (!availableStockItems.length && !recipeIngredients.length) {
+      showRecipeAlert('info', 'Belum ada bahan baku. Tambahkan dulu data bahan di halaman Stok Barang.');
+    }
   } catch (error) {
     showRecipeAlert('error', error.message || 'Terjadi kesalahan saat memuat resep.');
     if (tbody) {
@@ -580,9 +494,8 @@ async function openRecipeModal(menuId) {
 
 function closeRecipeModal() {
   const modal = document.getElementById('recipeModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
+  if (modal) modal.style.display = 'none';
+
   currentRecipeMenuId = null;
   currentRecipeMenu = null;
   recipeIngredients = [];
@@ -598,14 +511,14 @@ function populateRecipeStockSelect() {
   const select = document.getElementById('recipeStockSelect');
   if (!select) return;
 
-  const currentSelectedStockIds = new Set(recipeIngredients.map(i => Number(i.id_stock_item)));
+  const usedIds = new Set(recipeIngredients.map(i => Number(i.id_stock_item)));
 
   const options = ['<option value="">-- Pilih Bahan Baku --</option>'];
   availableStockItems.forEach(item => {
-    const isAlreadyInRecipe = currentSelectedStockIds.has(Number(item.id_stock_item));
+    const used = usedIds.has(Number(item.id_stock_item));
     options.push(`
-      <option value="${item.id_stock_item}" ${isAlreadyInRecipe ? 'disabled' : ''}>
-        ${escapeMenuHTML(item.name)} (${escapeMenuHTML(item.unit)})${isAlreadyInRecipe ? ' - Sudah dalam resep' : ''}
+      <option value="${item.id_stock_item}" ${used ? 'disabled' : ''}>
+        ${escapeMenuHTML(item.name)} (${escapeMenuHTML(item.unit)})${used ? ' - Sudah dalam resep' : ''}
       </option>
     `);
   });
@@ -619,9 +532,7 @@ function onRecipeStockSelectChange() {
   const unitDisplay = document.getElementById('recipeUnitDisplay');
   if (!select || !unitDisplay) return;
 
-  const selectedId = Number(select.value);
-  const found = availableStockItems.find(i => Number(i.id_stock_item) === selectedId);
-
+  const found = availableStockItems.find(i => Number(i.id_stock_item) === Number(select.value));
   unitDisplay.textContent = found ? found.unit : '-';
 }
 
@@ -630,7 +541,6 @@ function addRecipeIngredient() {
 
   const select = document.getElementById('recipeStockSelect');
   const qtyInput = document.getElementById('recipeQtyInput');
-
   if (!select || !qtyInput) return;
 
   const stockId = Number(select.value);
@@ -646,7 +556,6 @@ function addRecipeIngredient() {
     return;
   }
 
-  // Cegah bahan baku yang sama dimasukkan dua kali dalam resep
   if (recipeIngredients.some(i => Number(i.id_stock_item) === stockId)) {
     showRecipeAlert('error', `Bahan baku "${stockItem.name}" sudah ada dalam resep menu ini.`);
     return;
@@ -666,10 +575,8 @@ function addRecipeIngredient() {
     quantity_required: qty
   });
 
-  // Reset input form
   select.value = '';
   qtyInput.value = '';
-  onRecipeStockSelectChange();
 
   populateRecipeStockSelect();
   renderRecipeTable();
@@ -765,7 +672,6 @@ async function saveRecipe() {
     return;
   }
 
-  // Validasi: jumlah bahan harus lebih besar dari 0
   for (const item of recipeIngredients) {
     const qty = parseFloat(item.quantity_required);
     if (isNaN(qty) || qty <= 0) {
@@ -774,7 +680,6 @@ async function saveRecipe() {
     }
   }
 
-  // Validasi duplikasi
   const stockIds = recipeIngredients.map(i => Number(i.id_stock_item));
   if (new Set(stockIds).size !== stockIds.length) {
     showRecipeAlert('error', 'Terdapat bahan baku duplikat dalam resep.');
@@ -801,38 +706,32 @@ async function saveRecipe() {
       body: JSON.stringify(payload)
     });
 
-    const result = await response.json();
+    const result = await readJson(response);
     if (!response.ok) {
-      const message = result.errors
-        ? Object.values(result.errors).flat().join('\n')
-        : (result.message || 'Gagal menyimpan resep menu.');
-      throw new Error(message);
+      throw new Error(errorMessage(result, 'Gagal menyimpan resep menu (kode ' + response.status + ').'));
     }
 
-    recipeIngredients = (result.ingredients || []).map(item => ({
-      id_menu_ingredient: item.id_menu_ingredient || null,
-      id_stock_item: Number(item.id_stock_item),
-      name: item.name,
-      unit: item.unit,
-      quantity_required: Number(item.quantity_required)
-    }));
-
-    // Perbarui snapshot awal sesuai data terbaru agar tombol Simpan nonaktif
-    initialRecipeSnapshot = getRecipeSnapshot(recipeIngredients);
+    // Modal ditutup, jadi pesan sukses ditampilkan di halaman utama
     closeRecipeModal();
-
-    populateRecipeStockSelect();
-    renderRecipeTable();
-    updateSaveRecipeButtonState();
-
-    // Notifikasi keberhasilan HANYA ditampilkan di dalam modal
-    showRecipeAlert('success', result.message || 'Resep menu berhasil disimpan!');
+    showMenuMessage('success', result.message || 'Resep menu berhasil disimpan.');
   } catch (error) {
     showRecipeAlert('error', error.message || 'Terjadi kesalahan saat menyimpan resep.');
     updateSaveRecipeButtonState();
   } finally {
-    if (saveBtn) {
-      saveBtn.textContent = 'Simpan Resep';
-    }
+    if (saveBtn) saveBtn.textContent = 'Simpan Resep';
   }
 }
+
+/* ------------------------------------------------------------ UMUM */
+
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  closeMenuModal();
+  closeDeleteMenuModal();
+  closeRecipeModal();
+});
+
+// Global binding untuk inline handler HTML
+window.filterMenuByCategory = filterMenuByCategory;
+window.renderFilteredMenu = renderFilteredMenu;
+window.renderMenuAdmin = renderMenuAdmin;
