@@ -36,49 +36,43 @@ class ExpenseController extends Controller
 
     /**
      * Ambil data pengeluaran berupa JSON dengan filter pencarian dan rentang tanggal.
+     *
+     * Kolom tabel ms_pengeluaran:
+     *   id_pengeluaran, id_user, tanggal, total, kategori, keterangan
+     * Nama kunci JSON ke front-end tetap (expense_date, category, description, amount).
      */
     public function data(Request $request): JsonResponse
     {
         $this->checkAdminAccess();
 
-        $query = Expense::query()->orderByDesc('expense_date')->orderByDesc('id_expense');
+        $query = Expense::query()->orderByDesc('tanggal')->orderByDesc('id_pengeluaran');
 
         if ($request->filled('from')) {
-            $query->whereDate('expense_date', '>=', $request->input('from'));
+            $query->whereDate('tanggal', '>=', $request->input('from'));
         }
 
         if ($request->filled('to')) {
-            $query->whereDate('expense_date', '<=', $request->input('to'));
+            $query->whereDate('tanggal', '<=', $request->input('to'));
         }
 
         if ($request->filled('category')) {
-            $query->where('category', $request->input('category'));
+            $query->where('kategori', $request->input('category'));
         }
 
         if ($request->filled('q')) {
             $search = '%' . trim((string) $request->input('q')) . '%';
             $query->where(function ($q) use ($search) {
-                $q->where('category', 'like', $search)
-                  ->orWhere('description', 'like', $search);
+                $q->where('kategori', 'like', $search)
+                  ->orWhere('keterangan', 'like', $search);
             });
         }
 
         $expenses = $query->get();
 
-        $totalAmount = (float) $expenses->sum('amount');
+        $totalAmount = (float) $expenses->sum('total');
         $totalCount  = $expenses->count();
 
-        $data = $expenses->map(function ($item) {
-            return [
-                'id'           => $item->id_expense,
-                'expense_date' => Carbon::parse($item->expense_date)->format('Y-m-d'),
-                'formatted_date' => Carbon::parse($item->expense_date)->translatedFormat('d/m/Y'),
-                'category'     => $item->category,
-                'description'  => $item->description ?? '-',
-                'amount'       => (float) $item->amount,
-                'created_at'   => $item->created_at?->toIso8601String(),
-            ];
-        });
+        $data = $expenses->map(fn ($item) => $this->transform($item));
 
         return response()->json([
             'expenses'     => $data,
@@ -96,27 +90,13 @@ class ExpenseController extends Controller
 
         $this->cleanAmountInput($request);
 
-        $validated = $request->validate([
-            'expense_date' => ['required', 'date'],
-            'category'     => ['required', 'string', Rule::in(Expense::CATEGORIES)],
-            'description'  => ['nullable', 'string', 'max:500'],
-            'amount'       => ['required', 'numeric', 'gt:0'],
-        ], [
-            'expense_date.required' => 'Tanggal pengeluaran wajib diisi.',
-            'expense_date.date'     => 'Format tanggal tidak valid.',
-            'category.required'     => 'Kategori pengeluaran wajib dipilih.',
-            'category.in'           => 'Kategori pengeluaran tidak valid.',
-            'description.max'       => 'Keterangan tidak boleh lebih dari 500 karakter.',
-            'amount.required'       => 'Jumlah pengeluaran wajib diisi.',
-            'amount.numeric'        => 'Jumlah pengeluaran harus berupa angka numerik.',
-            'amount.gt'             => 'Jumlah pengeluaran wajib lebih dari 0.',
-        ]);
+        $validated = $this->validateExpense($request);
 
-        $expense = Expense::create($validated);
+        $expense = Expense::create($this->toColumns($validated, true));
 
         return response()->json([
             'message' => 'Pengeluaran berhasil dicatat.',
-            'data'    => $expense,
+            'data'    => $this->transform($expense),
         ], 201);
     }
 
@@ -129,27 +109,13 @@ class ExpenseController extends Controller
 
         $this->cleanAmountInput($request);
 
-        $validated = $request->validate([
-            'expense_date' => ['required', 'date'],
-            'category'     => ['required', 'string', Rule::in(Expense::CATEGORIES)],
-            'description'  => ['nullable', 'string', 'max:500'],
-            'amount'       => ['required', 'numeric', 'gt:0'],
-        ], [
-            'expense_date.required' => 'Tanggal pengeluaran wajib diisi.',
-            'expense_date.date'     => 'Format tanggal tidak valid.',
-            'category.required'     => 'Kategori pengeluaran wajib dipilih.',
-            'category.in'           => 'Kategori pengeluaran tidak valid.',
-            'description.max'       => 'Keterangan tidak boleh lebih dari 500 karakter.',
-            'amount.required'       => 'Jumlah pengeluaran wajib diisi.',
-            'amount.numeric'        => 'Jumlah pengeluaran harus berupa angka numerik.',
-            'amount.gt'             => 'Jumlah pengeluaran wajib lebih dari 0.',
-        ]);
+        $validated = $this->validateExpense($request);
 
-        $expense->update($validated);
+        $expense->update($this->toColumns($validated, false));
 
         return response()->json([
             'message' => 'Pengeluaran berhasil diperbarui.',
-            'data'    => $expense,
+            'data'    => $this->transform($expense->fresh()),
         ]);
     }
 
@@ -165,6 +131,63 @@ class ExpenseController extends Controller
         return response()->json([
             'message' => 'Pengeluaran berhasil dihapus.',
         ]);
+    }
+
+    /**
+     * Validasi input form pengeluaran (nama field dari front-end).
+     */
+    private function validateExpense(Request $request): array
+    {
+        return $request->validate([
+            'expense_date' => ['required', 'date'],
+            'category'     => ['required', 'string', Rule::in(Expense::CATEGORIES)],
+            'description'  => ['nullable', 'string', 'max:500'],
+            'amount'       => ['required', 'numeric', 'gt:0'],
+        ], [
+            'expense_date.required' => 'Tanggal pengeluaran wajib diisi.',
+            'expense_date.date'     => 'Format tanggal tidak valid.',
+            'category.required'     => 'Kategori pengeluaran wajib dipilih.',
+            'category.in'           => 'Kategori pengeluaran tidak valid.',
+            'description.max'       => 'Keterangan tidak boleh lebih dari 500 karakter.',
+            'amount.required'       => 'Jumlah pengeluaran wajib diisi.',
+            'amount.numeric'        => 'Jumlah pengeluaran harus berupa angka numerik.',
+            'amount.gt'             => 'Jumlah pengeluaran wajib lebih dari 0.',
+        ]);
+    }
+
+    /**
+     * Petakan field form ke nama kolom tabel ms_pengeluaran.
+     */
+    private function toColumns(array $validated, bool $isNew): array
+    {
+        $columns = [
+            'tanggal'    => $validated['expense_date'],
+            'kategori'   => $validated['category'],
+            'keterangan' => $validated['description'] ?? null,
+            'total'      => (int) round((float) $validated['amount']),
+        ];
+
+        if ($isNew) {
+            $columns['id_user'] = Auth::id();
+        }
+
+        return $columns;
+    }
+
+    /**
+     * Ubah satu baris pengeluaran ke format JSON yang dipakai front-end.
+     */
+    private function transform(Expense $item): array
+    {
+        return [
+            'id'             => $item->id_pengeluaran,
+            'expense_date'   => Carbon::parse($item->tanggal)->format('Y-m-d'),
+            'formatted_date' => Carbon::parse($item->tanggal)->translatedFormat('d/m/Y'),
+            'category'       => $item->kategori,
+            'description'    => $item->keterangan ?? '-',
+            'amount'         => (float) $item->total,
+            'created_at'     => $item->created_at?->toIso8601String(),
+        ];
     }
 
     /**

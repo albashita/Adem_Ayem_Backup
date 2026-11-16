@@ -6,7 +6,7 @@ use App\Models\Expense;
 use App\Models\ExpenseItem;
 use App\Models\MenuIngredient;
 use App\Models\StockItem;
-use App\Models\StockOut;
+use App\Models\StokKeluar;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -86,7 +86,7 @@ class StockItemController extends Controller
                 ];
             });
 
-        $outs = StockOut::with(['stockItem', 'user'])
+        $outs = StokKeluar::with(['stockItem', 'user'])
             ->when($from, fn ($q) => $q->whereDate('created_at', '>=', $from))
             ->when($to, fn ($q) => $q->whereDate('created_at', '<=', $to))
             ->orderByDesc('created_at')
@@ -340,7 +340,7 @@ class StockItemController extends Controller
 
                 $item->decrement('stok', $validated['quantity']);
 
-                StockOut::create([
+                StokKeluar::create([
                     'id_bahan'   => $item->id_bahan,
                     'id_user'    => Auth::id(),
                     'jumlah'     => $validated['quantity'],
@@ -403,7 +403,7 @@ class StockItemController extends Controller
         return [$source, $desc];
     }
 
-    private function parseOut(StockOut $m): array
+    private function parseOut(StokKeluar $m): array
     {
         $text   = $m->keterangan ?? '';
         $source = match ($m->alasan) {
